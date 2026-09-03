@@ -1,0 +1,10 @@
+# Streamlit's default accent is a bright red (#FF4B4B), which is not this
+# project's palette and reads as an error state on every slider and button.
+# These are app.py's colours: the blue of the first plot trace, its slate
+# text, and the page grey behind its cards.
+[theme]
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f6f7f9"
+textColor = "#0f172a"
+font = "sans serif"

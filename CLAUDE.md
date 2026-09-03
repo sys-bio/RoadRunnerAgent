@@ -17,9 +17,13 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   8/8 session-state honest, $0.23** for the whole set at sonnet-5/low.
 - `test_milestone1.py`: **223 checks**, no API key needed. Run it after any
   change; it is the safety net for everything below.
+- `test_streamlit_app.py`: **19 checks** on the hosted build, also free -
+  real page builds driven through real widgets via Streamlit's `AppTest`.
 
-**Current task:** deploying a probe to Streamlit Community Cloud to decide
-whether the agent can be hosted. See "Where we are" at the bottom.
+**Current task:** deploying `streamlit_app.py` - the agent UI, now ported to
+Streamlit and verified in a browser. The simulation stack is proven on Linux
+and the sandbox is verified with a real key. See "Where we are" at the
+bottom.
 
 ## Environment
 
@@ -70,7 +74,9 @@ RRAGENT_SANDBOX=0 .venv/Scripts/python.exe app.py                # GUI, unsandbo
 | `remote.py` | Host-side `WorkerSession`: spawns the worker, proxies the Session |
 | `evaluate.py` | Runs the case set, scores it, saves JSON |
 | `cases/` | 8 cases with ground truth |
-| `streamlit_app.py` | Deployment probe for Streamlit Cloud (not the app) |
+| `streamlit_app.py` | **The hosted app** - the agent UI, ported to Streamlit |
+| `pages/2_Deployment_probe.py` | The old probe: proves the stack installs on Linux |
+| `test_streamlit_app.py` | 19 headless checks on the hosted build, no key needed |
 
 ## Verified facts - do not re-derive, do not assume
 
@@ -122,6 +128,18 @@ bifurcation at **n\* = 9.414** with `brentq`; sonnet quotes the textbook value
 of 8 every time. Both pass every mechanical check. Only reading catches it -
 which is why `--detail thorough` tells the agent to compute thresholds for
 *this* parameterisation.
+
+Confirmed again on 2026-09-03: sonnet asserted "at n=8 exactly the fixed
+point is right at the Hopf bifurcation" when max Re(eig) is -0.054 there,
+nowhere near marginal. Every mechanical check still passed.
+
+The same run showed that `classification` wobbles between **parametric** and
+**expected** on this case - three earlier sonnet-5/low runs said parametric,
+this one said expected - while the prose, the cause and the recommendation
+were identical and correct each time. The two labels genuinely both fit a
+model that is right, an output that is right, and a fix that is a parameter
+change. Treat a single classification miss on `goodwin_damped` as sampling
+variance, not a regression; the handoff is byte-identical run to run.
 
 ## How to work on this
 
@@ -177,6 +195,12 @@ Two things the proxy has to get right, both of which bit once:
 an in-process Session, which starts ~4.5s sooner per case. All 8 cases build
 byte-identical handoffs either way, except `stochastic_variation`, which
 differs by its RNG seed - which is the point of that case.
+
+**The sandbox is transparent to the agent loop, measured with a real key**
+(2026-09-03, `goodwin_damped`, sonnet-5/low): 3 turns, 20.1s, $0.0496,
+report produced, session restored honestly, no phantom changes - the same
+shape and price as the three in-process runs of that case (3-4 turns,
+$0.037-0.048). The worker subprocess costs nothing in agent behaviour.
 
 Three properties the tests pin down, because a silent regression here hands a
 stranger an API key:
@@ -260,28 +284,53 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
    and the GUI runs on it. Filesystem, network and resource abuse are not
    closed, and need a container per session, which Community Cloud cannot
    give - one container serves every viewer.
-2. **There is no Streamlit UI for the agent.** `app.py` is NiceGUI
-   (1,057 lines); `streamlit_app.py` is only the probe. Hosting on
-   Community Cloud means porting the UI; hosting somewhere that runs a
-   long-lived ASGI process (Fly, Render, Cloud Run) means `app.py` runs
-   as-is *and* per-session containers become possible, which is the only
-   real answer to (1).
+2. ~~There is no Streamlit UI for the agent.~~ **Done, 2026-09-03.**
+   `streamlit_app.py` is now the agent UI: model text, live values with a
+   slider each, plot, the question box, a streamed activity feed and the
+   full report with Try it / Discard / Write into model text. Verified in a
+   browser against a sandboxed worker - dragging `n` from 8 to 12 turns the
+   damped wobble into a sustained limit cycle, which is the case file's
+   measured physics. `app.py` (NiceGUI) remains the local build.
+
+   Two things did not port, and both are inherent to Streamlit re-running
+   the script on every interaction:
+
+   - **No Stop button.** While `agent.ask` blocks there is no interaction to
+     catch, so `stop_check` can never fire. The turn/second/token budgets in
+     the sidebar are the only brakes.
+   - **A slower explore loop.** Simulation is ~6 ms; the script re-run is
+     what costs. Usable, not the NiceGUI build's 60 fps.
+
+   The spec's stated reason for dropping Streamlit (§7 - reruns fight a
+   long-running loop) turned out **not** to apply to the activity feed:
+   during a run nothing can touch a widget, so `on_event` paints into a
+   container as events arrive and the feed streams fine.
+
+### Three Streamlit rules this port had to learn
+
+All three produced a working-looking page that was quietly wrong.
+
+- **`streamlit run` re-executes the whole file on every interaction.** A
+  module-level `_SESSIONS = {}` is therefore rebuilt each time, so the app
+  made a fresh unloaded Session on every click and nothing stayed loaded.
+  The registry must be `@st.cache_resource`, the one store that outlives a
+  rerun. `test_streamlit_app.py` pins this down.
+- **Writing to a widget-backed key after its widget exists raises.** The
+  report's buttons rewrite the model text box, which is rendered above them.
+  Hence `queue()` / `apply_pending()`: park the value, apply it at the top of
+  the next run.
+- **There is no disconnect event.** `app.py` kills a tab's worker from
+  `client.on_disconnect`; Streamlit has no equivalent, so a closed tab would
+  leak a subprocess until the box died. Sessions carry a last-touched stamp
+  and `reap_idle_sessions` closes them after 30 minutes.
 
 ### Next actions, in order
 
-1. **Get a working API key.** The old one was pasted into a chat transcript
-   on 2026-09-03 and must be treated as compromised - revoke it and create a
-   replacement. Prefer a **workspace-scoped** key: the current identity-linked
-   arrangement is why `make_client()` must send an `anthropic-workspace-id`
-   header, and why a missing `ANTHROPIC_WORKSPACE_ID` returns 400, which
-   reads like an auth failure but is not.
-
-   `setx` only affects processes started afterwards, and new Windows Terminal
-   *tabs* inherit the environment of the already-running Terminal process -
-   so close every Terminal window, not just the tab.
-
-   Set it as `RRAGENT_ANTHROPIC_KEY` - see "Environment" above for why not
-   `ANTHROPIC_API_KEY`. Check without printing the secret:
+**Done, 2026-09-03 - do not redo:** the API key is replaced and persisted as
+`RRAGENT_ANTHROPIC_KEY`; one case has been run end to end through the
+sandbox with it; and the Streamlit UI is built and verified. The numbers are
+under "Security" and "Economics" above. To re-check the key without
+printing it:
 
 ```bash
 # //v, not /v - MSYS rewrites a lone /v into a Windows path, and reg
@@ -291,34 +340,47 @@ reg query 'HKCU\Environment' //v RRAGENT_ANTHROPIC_KEY >/dev/null 2>&1 && echo p
 echo "key: ${RRAGENT_ANTHROPIC_KEY:+set}"
 ```
 
-2. **Run one case through the sandbox** - the only thing about it still
-   unverified, because no key was available in the session that built it.
-   About $0.05:
+1. **Run one agent question through the hosted UI.** Everything else about
+   it is verified headlessly and in a browser; what no test covers is the
+   streamed feed and the report panel during a real run, because that needs
+   a key pasted into the sidebar. Paste it, click **Answer my question**,
+   and watch the feed. About $0.05.
 
-```bash
-.venv/Scripts/python.exe evaluate.py --cases goodwin_damped --model claude-sonnet-5 --sandbox
-```
+2. **Deploy it.** Point Community Cloud at `streamlit_app.py` (it currently
+   serves the probe, which is now `pages/2_Deployment_probe.py` and still
+   reachable from the sidebar), reboot after the requirements change, and
+   set `APP_PASSWORD` in the app's secrets. Without that password the app is
+   open to anyone with the URL - `password_gate()` allows it, deliberately,
+   so that running locally needs no setup, which makes forgetting it on the
+   deployment the easy mistake.
 
-   If it classifies and reports as it used to, the sandbox is transparent to
-   the agent loop and this work is finished. What is *already* proven without
-   an API key: all 8 cases build byte-identical handoffs sandboxed or not
-   (bar `stochastic_variation`'s RNG seed), and the GUI loads, plots and
-   edits live parameters through a worker - checked in a browser.
+3. **The hosting question is still open, and the answer has not changed.**
+   Community Cloud is now a real option rather than a port away - but it
 
-3. **Decide where this is hosted.** This is the last open question and it
-   shapes everything after it.
+   still cannot isolate viewers from each other, and that has not been
+   fixed by anything above.
 
-   - *Community Cloud* means porting 1,057 lines of NiceGUI to Streamlit, and
-     ends on a platform that still cannot isolate viewers from each other.
-     Defensible only for a few named colleagues behind a password, with
-     bring-your-own-key.
+   - *Community Cloud* is deployable today. One container serves every
+     viewer, so it is defensible only for a few named colleagues behind
+     `APP_PASSWORD`, each bringing their own key - which is exactly how
+     `streamlit_app.py` is written.
    - *Fly / Render / Cloud Run* runs `app.py` as-is - NiceGUI is ASGI, so
      there is no UI port at all - and can give a container per session, which
      is the only real answer to the filesystem, network and CPU abuse the
      worker subprocess deliberately does not close.
 
-   **The recommendation is the second.** The UI port is the largest piece of
-   work on the table and it buys the weaker security story.
+   **The recommendation is still the second**, but the argument has changed:
+   the UI port is no longer the cost, because it is done. What remains is
+   only that Community Cloud cannot give a container per session. Ship on
+   Community Cloud now for colleagues; move to Fly or Cloud Run when it
+   needs to face anyone else.
 
-   Keep the Streamlit deployment as what it now is: a free public probe
-   showing the RoadRunner stack installs and behaves on Linux.
+2. **Once hosting is chosen**, the work behind it is: a Dockerfile pinning the
+   host's resolved set (Python 3.11, `libroadrunner 2.10.0`, `numpy 2.2.6`,
+   tellurium - see "What the host installs"), a container or equivalent
+   boundary per session to close filesystem/network/CPU, and bring-your-own-key
+   in the GUI so the deployment holds no credential of the lab's.
+
+3. **Optional, cheap, not blocking:** re-run the full set through the sandbox
+   (`--cases all --sandbox`, ~$0.40 at sonnet-5/low) to confirm the 8/8 result
+   holds there as well as in-process. One case already shows it does.

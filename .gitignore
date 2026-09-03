@@ -16,3 +16,6 @@ __pycache__/
 
 # Saved evaluation runs: keep them locally, they are not part of the project.
 results/
+streamlit.log
+secrets.toml
+.streamlit/secrets.toml
