@@ -284,7 +284,10 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
    `ANTHROPIC_API_KEY`. Check without printing the secret:
 
 ```bash
-reg query 'HKCU\Environment' /v RRAGENT_ANTHROPIC_KEY >/dev/null 2>&1 && echo persisted
+# //v, not /v - MSYS rewrites a lone /v into a Windows path, and reg
+# then reports Invalid syntax with exit status 0, which reads as
+# "not set" when it is set.
+reg query 'HKCU\Environment' //v RRAGENT_ANTHROPIC_KEY >/dev/null 2>&1 && echo persisted
 echo "key: ${RRAGENT_ANTHROPIC_KEY:+set}"
 ```
 
