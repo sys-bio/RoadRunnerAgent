@@ -30,12 +30,20 @@ The one thing outstanding is an API key, from
 <https://console.anthropic.com/settings/keys>. In PowerShell:
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."     # this window only
-setx ANTHROPIC_API_KEY "sk-ant-..."       # permanently (reopen the terminal)
+$env:RRAGENT_ANTHROPIC_KEY = "sk-ant-..."   # this window only
+setx RRAGENT_ANTHROPIC_KEY "sk-ant-..."     # permanently (reopen the terminal)
 ```
 
 `setx` only affects processes started **afterwards** — the terminal you typed
 it in never sees it. Close that terminal and open a new one.
+
+**Why not `ANTHROPIC_API_KEY`?** That name is still honoured as a fallback,
+but do not use it if you also run Claude Code or another Anthropic tool on
+this machine: they read the same variable and will adopt your key for their
+own authentication. An identity-linked key adopted that way is sent without
+the workspace header it needs, so every request fails with a 400 that looks
+like a bad key — and the other tool stops working until the variable is
+removed. `RRAGENT_ANTHROPIC_KEY` is this project's alone.
 
 **If your key is identity-linked** you will also get a 400 saying
 `anthropic-workspace-id is required`. The key is fine; it just needs to know
@@ -61,7 +69,7 @@ Use `.venv\Scripts\python.exe` for everything.
 .venv\Scripts\python.exe run_case.py --list
 .venv\Scripts\python.exe run_case.py goodwin_damped --dry-run
 .venv\Scripts\python.exe run_case.py goodwin_damped --truth
-.venv\Scripts\python.exe test_milestone1.py     # 102 checks, no API key needed
+.venv\Scripts\python.exe test_milestone1.py     # 223 checks, no API key needed
 
 # milestone 2 - the evaluation
 .venv\Scripts\python.exe evaluate.py --estimate --repeats 3   # cost first

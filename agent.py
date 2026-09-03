@@ -238,14 +238,21 @@ SUBMIT_REPORT_TOOL = {
 def make_client() -> anthropic.Anthropic:
     """Build the API client from the environment.
 
-    The SDK resolves the key itself.  An identity-linked API key additionally
-    requires the workspace it acts in, sent as a header - the SDK only adds
-    that automatically for profile-based auth, so pass it here from
-    ANTHROPIC_WORKSPACE_ID when one is set.
+    The key is resolved here rather than left to the SDK, because this
+    application prefers RRAGENT_ANTHROPIC_KEY over the SDK's own
+    ANTHROPIC_API_KEY - see the note in `providers.REGISTRY`. When neither is
+    set the key is left to the SDK, whose error message is the clearer one.
+
+    An identity-linked API key additionally requires the workspace it acts
+    in, sent as a header - the SDK only adds that automatically for
+    profile-based auth, so pass it here from ANTHROPIC_WORKSPACE_ID when one
+    is set.
     """
     workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
     headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
-    return anthropic.Anthropic(default_headers=headers)
+    _found, key = providers.resolve_key(
+        providers.REGISTRY["anthropic"]["key_env"])
+    return anthropic.Anthropic(api_key=key or None, default_headers=headers)
 
 
 # Every run measured so far spends about 94% of its tokens on input, because
@@ -278,13 +285,12 @@ def credentials_hint(model: str = MODEL) -> str | None:
     Which key is needed depends on the model: each provider brings its own.
     """
     try:
-        variable = providers.key_env_for(model)
+        names = providers.key_envs_for(model)
     except ValueError as exc:
         return str(exc)
-    if not os.environ.get(variable, "").strip():
-        return (f"{variable} is not set in this process. If you used setx, "
-                "open a new terminal - setx only affects processes started "
-                "afterwards.")
+    _found, key = providers.resolve_key(names)
+    if not key:
+        return providers.missing_key_message(names)
     return None
 
 

@@ -125,13 +125,16 @@ def main_page() -> None:
         status = ui.badge("no model", color="grey-7").classes("px-3 py-1")
 
     # A missing key fails only when the user clicks - say so up front instead.
-    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+    # `credentials_hint` names whichever variable the selected model needs,
+    # and every alternative that would also satisfy it.
+    key_hint = agent_config.credentials_hint(agent_config.MODEL)
+    if key_hint:
         with ui.element("div").classes("w-full px-5 py-2").style(
                 "background:#fef3c7; border-bottom:1px solid #fcd34d"):
             ui.label(
-                "ANTHROPIC_API_KEY is not set in this process. If you used "
-                "setx, close this terminal and start the app from a new one - "
-                "setx only affects processes started afterwards."
+                key_hint.replace("open a new terminal",
+                                 "close this terminal and start the app from "
+                                 "a new one")
             ).classes("text-sm").style("color:#92400e")
 
     # --------------------------------------------------------------- widgets

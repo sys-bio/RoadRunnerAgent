@@ -16,6 +16,7 @@ what the comparison between the two actually means.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,9 +150,7 @@ class OpenAICompatibleProvider:
 
     def __init__(self, model: str, effort: str, system: str,
                  tools: list[dict], max_tokens: int, client=None,
-                 base_url: str = "", api_key_env: str = "") -> None:
-        import os
-
+                 base_url: str = "", api_key_env=()) -> None:
         from openai import OpenAI
 
         self.model = model
@@ -164,12 +163,9 @@ class OpenAICompatibleProvider:
         if client is not None:
             self.client = client
         else:
-            key = os.environ.get(api_key_env, "").strip()
+            _found, key = resolve_key(api_key_env)
             if not key:
-                raise RuntimeError(
-                    f"{api_key_env} is not set in this process. If you used "
-                    "setx, open a new terminal - setx only affects processes "
-                    "started afterwards.")
+                raise RuntimeError(missing_key_message(api_key_env))
             self.client = OpenAI(api_key=key, base_url=base_url)
 
     @staticmethod
@@ -255,7 +251,13 @@ REGISTRY = {
     "anthropic": {
         "cls": AnthropicProvider,
         "prefixes": ("claude-",),
-        "key_env": "ANTHROPIC_API_KEY",
+        # Primary first. The project's own name comes first deliberately:
+        # Claude Code reads ANTHROPIC_API_KEY out of the environment too, and
+        # once it adopts an identity-linked key it stops sending the
+        # workspace header that key needs, so every request 400s and the CLI
+        # becomes unusable. Setting RRAGENT_ANTHROPIC_KEY keeps the two
+        # apart; ANTHROPIC_API_KEY still works for anyone who has it set.
+        "key_env": ("RRAGENT_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
         "supports_effort": True,
         "effort_levels": ("low", "medium", "high", "xhigh", "max"),
         "effort_map": {},
@@ -264,7 +266,7 @@ REGISTRY = {
     "deepseek": {
         "cls": OpenAICompatibleProvider,
         "prefixes": ("deepseek-",),
-        "key_env": "DEEPSEEK_API_KEY",
+        "key_env": ("DEEPSEEK_API_KEY",),
         # DeepSeek takes effort under the OpenAI-dialect name
         # `reasoning_effort`. The published docs list none/low/high/max, but
         # the API was probed directly and accepts more than that: none,
@@ -281,14 +283,50 @@ REGISTRY = {
                           "xhigh", "max"),
         "effort_map": {},
         "kwargs": {"base_url": "https://api.deepseek.com/v1",
-                   "api_key_env": "DEEPSEEK_API_KEY"},
+                   "api_key_env": ("DEEPSEEK_API_KEY",)},
     },
 }
 
 
+def _env_names(names) -> tuple[str, ...]:
+    """Accept one name or several, always hand back a tuple."""
+    return (names,) if isinstance(names, str) else tuple(names)
+
+
+def resolve_key(names) -> tuple[str, str]:
+    """(the variable that held it, its value) - ("", "") when none is set.
+
+    The first name that carries a value wins, so a provider can be reached
+    under a project-specific variable while still honouring the vendor's
+    conventional one.
+    """
+    for name in _env_names(names):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return name, value
+    return "", ""
+
+
+def missing_key_message(names) -> str:
+    """Why the API will fail, naming every variable that would satisfy it."""
+    candidates = _env_names(names)
+    which = candidates[0] if len(candidates) == 1 else (
+        f"{candidates[0]} (or {', '.join(candidates[1:])})")
+    return (f"{which} is not set in this process. If you used setx, open a "
+            "new terminal - setx only affects processes started afterwards.")
+
+
+def key_envs_for(model: str) -> tuple[str, ...]:
+    """Every environment variable that could hold this model's key."""
+    return _env_names(REGISTRY[provider_for(model)]["key_env"])
+
+
 def key_env_for(model: str) -> str:
-    """Which environment variable holds the key for this model."""
-    return REGISTRY[provider_for(model)]["key_env"]
+    """Which variable holds the key for this model - the one actually set,
+    or the preferred name when none is."""
+    names = key_envs_for(model)
+    found, _value = resolve_key(names)
+    return found or names[0]
 
 
 def supports_effort(model: str) -> bool:

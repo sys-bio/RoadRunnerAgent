@@ -929,6 +929,58 @@ def test_detail_levels():
           agent.Handoff(detail="thorough").detail == "thorough")
 
 
+def test_key_resolution_order():
+    """RRAGENT_ANTHROPIC_KEY wins, ANTHROPIC_API_KEY still works.
+
+    The names must stay distinct: Claude Code reads ANTHROPIC_API_KEY out of
+    the environment for its own auth, and an identity-linked key adopted that
+    way is sent without the workspace header it requires, so every request
+    400s and the CLI stops working. Sharing the variable broke it once.
+    """
+    print("\napi key resolution")
+    import os
+
+    import agent
+    import providers
+
+    names = providers.key_envs_for("claude-opus-5")
+    check("the project's own name is preferred",
+          names == ("RRAGENT_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"), str(names))
+    check("deepseek is unaffected",
+          providers.key_envs_for("deepseek-v4-pro") == ("DEEPSEEK_API_KEY",))
+
+    saved = {n: os.environ.pop(n, None) for n in names}
+    try:
+        check("no key is a reported failure, naming both variables",
+              (agent.credentials_hint("claude-opus-5") or "").startswith(
+                  "RRAGENT_ANTHROPIC_KEY (or ANTHROPIC_API_KEY) is not set"),
+              str(agent.credentials_hint("claude-opus-5")))
+
+        os.environ["ANTHROPIC_API_KEY"] = "sk-fallback"
+        check("the vendor's own variable still satisfies the check",
+              agent.credentials_hint("claude-opus-5") is None)
+        check("and is the one reported as in use",
+              providers.key_env_for("claude-opus-5") == "ANTHROPIC_API_KEY")
+
+        os.environ["RRAGENT_ANTHROPIC_KEY"] = "sk-preferred"
+        found, value = providers.resolve_key(names)
+        check("the project's key wins when both are set",
+              (found, value) == ("RRAGENT_ANTHROPIC_KEY", "sk-preferred"),
+              f"{found}={value}")
+
+        # An unset variable and one set to whitespace must behave alike -
+        # setx with an empty value leaves the latter behind.
+        os.environ["RRAGENT_ANTHROPIC_KEY"] = "   "
+        check("a blank value is not a key",
+              providers.resolve_key(names)[0] == "ANTHROPIC_API_KEY")
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def test_worker_sandbox():
     """The subprocess sandbox: no credentials, state that persists, crash
     recovery.
@@ -943,12 +995,15 @@ def test_worker_sandbox():
 
     canary = "sk-canary-do-not-leak"
     os.environ["ANTHROPIC_API_KEY"] = canary
+    os.environ["RRAGENT_ANTHROPIC_KEY"] = canary
     os.environ["A_PRIVATE_SETTING"] = canary
 
     with WorkerSession(timeout=20) as w:
         env = w._request("environment")
         check("worker cannot see ANTHROPIC_API_KEY",
               "ANTHROPIC_API_KEY" not in env)
+        check("worker cannot see RRAGENT_ANTHROPIC_KEY",
+              "RRAGENT_ANTHROPIC_KEY" not in env)
         check("worker cannot see unrelated host variables",
               "A_PRIVATE_SETTING" not in env)
         check("no allowlisted variable carries the canary",
@@ -956,9 +1011,10 @@ def test_worker_sandbox():
         check("worker gets a scratch home, not the user's",
               env.get("HOME", "") not in ("", os.path.expanduser("~")))
 
-        out, _ = w.run("import os; print(os.environ.get('ANTHROPIC_API_KEY'))")
+        out, _ = w.run("import os; print([os.environ.get(n) for n in "
+                       "('ANTHROPIC_API_KEY', 'RRAGENT_ANTHROPIC_KEY')])")
         check("agent code reads no key out of the environment",
-              "None" in out and canary not in out)
+              "None, None" in out and canary not in out)
 
         w.load(MODEL)
         check("model loads in the worker",
@@ -1025,7 +1081,8 @@ def test_worker_sandbox():
     finally:
         w2.close()
 
-    for name in ("ANTHROPIC_API_KEY", "A_PRIVATE_SETTING"):
+    for name in ("ANTHROPIC_API_KEY", "RRAGENT_ANTHROPIC_KEY",
+                 "A_PRIVATE_SETTING"):
         os.environ.pop(name, None)
 
 
@@ -1049,6 +1106,7 @@ if __name__ == "__main__":
     test_wind_up_forces_a_report()
     test_semicolon_is_a_separator_not_a_terminator()
     test_detail_levels()
+    test_key_resolution_order()
     test_worker_sandbox()
 
     print()

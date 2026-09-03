@@ -15,7 +15,7 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   repaired by its documented fix.
 - Best measured run: **8/8 classification, 8/8 cause, 8/8 changes reported,
   8/8 session-state honest, $0.23** for the whole set at sonnet-5/low.
-- `test_milestone1.py`: **215 checks**, no API key needed. Run it after any
+- `test_milestone1.py`: **223 checks**, no API key needed. Run it after any
   change; it is the safety net for everything below.
 
 **Current task:** deploying a probe to Streamlit Community Cloud to decide
@@ -27,6 +27,14 @@ whether the agent can be hosted. See "Where we are" at the bottom.
   project adds `nicegui`, `anthropic`, `openai` on top of it.
 - **The user runs Git Bash inside Windows Terminal.** Write bash, not
   PowerShell. Paths use forward slashes.
+- The Anthropic key lives in **`RRAGENT_ANTHROPIC_KEY`**, not
+  `ANTHROPIC_API_KEY`. Claude Code reads the latter out of the environment
+  for its own authentication, and an identity-linked key adopted that way is
+  sent without the workspace header it requires - so every request 400s and
+  the CLI becomes unusable until the variable is removed. That happened once.
+  `ANTHROPIC_API_KEY` is still honoured as a fallback
+  (`providers.REGISTRY["anthropic"]["key_env"]` lists both, preferred first);
+  do not set it on a machine that also runs Claude Code.
 - API keys live in environment variables set with `setx` (persisted in the
   Windows user registry). **Never in files in the repo** - two were once
   committed to a public repo and auto-revoked by GitHub secret scanning
@@ -40,7 +48,7 @@ whether the agent can be hosted. See "Where we are" at the bottom.
 
 ```bash
 .venv/Scripts/python.exe app.py                     # GUI on :8080
-.venv/Scripts/python.exe test_milestone1.py         # 191 checks, free
+.venv/Scripts/python.exe test_milestone1.py         # 223 checks, free
 .venv/Scripts/python.exe evaluate.py --estimate --cases all
 .venv/Scripts/python.exe evaluate.py --cases all --model claude-sonnet-5
 .venv/Scripts/python.exe evaluate.py --report results/<stamp>
@@ -270,12 +278,14 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
 
    `setx` only affects processes started afterwards, and new Windows Terminal
    *tabs* inherit the environment of the already-running Terminal process -
-   so close every Terminal window, not just the tab. Check without printing
-   the secret:
+   so close every Terminal window, not just the tab.
+
+   Set it as `RRAGENT_ANTHROPIC_KEY` - see "Environment" above for why not
+   `ANTHROPIC_API_KEY`. Check without printing the secret:
 
 ```bash
-reg query HKCU\Environment /v ANTHROPIC_API_KEY >/dev/null 2>&1 && echo persisted
-echo "key: ${ANTHROPIC_API_KEY:+set}"
+reg query 'HKCU\Environment' /v RRAGENT_ANTHROPIC_KEY >/dev/null 2>&1 && echo persisted
+echo "key: ${RRAGENT_ANTHROPIC_KEY:+set}"
 ```
 
 2. **Run one case through the sandbox** - the only thing about it still
