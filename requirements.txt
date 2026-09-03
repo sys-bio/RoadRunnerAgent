@@ -1,28 +1,24 @@
 # Dependencies for the hosted (Streamlit) build.
 #
-# Deliberately WITHOUT tellurium. The only thing this project uses from it is
-# `te.loada`, which is antimony -> SBML -> RoadRunner in a few lines, while
-# tellurium drags in rrplugins (27 MB), scipy (35 MB), pandas, phrasedml and
-# python-libsbml. Measured on the Linux wheel set: 283 MB with tellurium,
-# 169 MB without.
+# tellurium IS required, despite being heavy. session.py calls te.loada in
+# five places, agent.py puts `te` in the agent's namespace and prompts.py
+# promises the agent it is there; agent.py also imports matplotlib, which
+# nothing else here pulls in. Omitting tellurium saves ~114 MB of wheels and
+# breaks the app at import, which is a bad trade. rrplugins (27 MB) is
+# Windows-only by its marker, so the Linux install does not pay for it.
+#
+# numpy is pinned to the series libroadrunner is built against. The first
+# hosted deployment segfaulted at startup with no traceback; pinning numpy to
+# 2.2.6 - what the development machine runs RoadRunner on - fixed it. Do NOT
+# try `numpy<2`: libroadrunner 2.10.0 declares `numpy~=2.2`, so that pin
+# cannot resolve and fails the install outright. tellurium asks only for
+# numpy>=1.23 and libroadrunner>=2.8, so it does not fight either pin.
 #
 # libroadrunner resolves by glibc target: manylinux2014 gets 2.7.0, while
 # manylinux_2_28 (any current Debian, which is what Streamlit Cloud runs)
-# gets 2.10.0. The local development machine has 2.9.1, so the hosted build
-# runs a NEWER RoadRunner than the one this project's documented behaviours
-# were verified against - which is what streamlit_app.py checks. 2.10.0 is
-# pinned rather than floated, so a hosted deployment cannot silently change
-# the semantics the session logic depends on.
-
-# numpy is pinned to the series libroadrunner is built against. The first
-# hosted deployment segfaulted at startup with no traceback, and the first
-# guess was a numpy 1.x/2.x ABI mismatch - but libroadrunner 2.10.0 declares
-# `numpy~=2.2`, so `numpy<2` will not even resolve, and the host's 2.4.6 was
-# a legal choice rather than an obvious fault. 2.2.6 is what the development
-# machine runs RoadRunner on without trouble, so this narrows the hosted
-# stack to a configuration known to work somewhere. If the probe still
-# crashes on `import roadrunner`, numpy is not the culprit and the next
-# suspect is the 2.10.0 manylinux_2_28 wheel itself.
+# gets 2.10.0. It is pinned rather than floated so a deployment cannot
+# silently change the semantics session.py depends on. The deployed probe
+# confirms the three behaviours in CLAUDE.md still hold on 2.10.0.
 
 libroadrunner==2.10.0
 antimony
@@ -31,3 +27,4 @@ streamlit
 plotly
 anthropic
 openai
+tellurium

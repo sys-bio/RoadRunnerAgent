@@ -160,14 +160,26 @@ Deploying `streamlit_app.py` to Streamlit Community Cloud
 python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://pypi.org/pypi/libroadrunner/2.10.0/json'))['info']['requires_dist'])"
 ```
 
-**Two blockers remain before the agent itself can be hosted.**
+**One blocker remains before the agent itself can be hosted.**
 
-1. **`session.py` hard-imports tellurium, which `requirements.txt` omits on
-   purpose.** `te.loada` is called in five places in `session.py`;
-   `agent.py` puts `te` in the agent namespace and `prompts.py` promises it
-   is there. The probe never imported `session`, so this stayed invisible -
-   the hosted app would die at import. Needs a local `loada` shim
-   (antimony -> SBML -> RoadRunner, per "Verified facts") and a decision on
-   what `te` means to agent code that no longer has tellurium.
-2. **`run_python` is still an unsandboxed `exec` in the host process.** See
-   "Security" above; this is the real gate, and it is unchanged.
+`run_python` is still an unsandboxed `exec` in the host process. See
+"Security" above; this is the real gate, and it is unchanged.
+
+A second blocker was closed by shipping tellurium in `requirements.txt`
+after all. `session.py` calls `te.loada` in five places, `agent.py` puts
+`te` in the agent namespace and imports matplotlib, and `prompts.py`
+promises the agent `te` is there - so the tellurium-free build died at
+import, a fault the probe never saw because it never imported `session`.
+Resolving for the host (Linux, py3.11) gives 94 packages with the
+`numpy==2.2.6` and `libroadrunner==2.10.0` pins intact; tellurium asks only
+for `numpy>=1.23` and `libroadrunner>=2.8`, and its heaviest Windows-only
+dependency, rrplugins, never installs there.
+
+**Check a requirements change against the host's platform before pushing**,
+rather than learning from a failed deploy. Pass the older manylinux tags
+too - a `manylinux2014` wheel runs fine on Debian, but `--platform
+manylinux_2_28_x86_64` alone will not match it and invents conflicts:
+
+```bash
+.venv/Scripts/python.exe -m pip install --dry-run --ignore-installed   --report rep.json --python-version 3.11 --only-binary=:all:   --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64   --platform manylinux_2_17_x86_64 --platform any   --target /tmp/pipdry -r requirements.txt
+```
