@@ -14,9 +14,16 @@
 # pinned rather than floated, so a hosted deployment cannot silently change
 # the semantics the session logic depends on.
 
+# numpy is pinned below 2 because the first hosted deployment segfaulted at
+# startup with no traceback. The host installed numpy 2.4.6; a C extension
+# built against the numpy 1.x ABI crashes under 2.x. Pinning is the cheapest
+# test of that hypothesis. (Locally, roadrunner 2.9.1 runs happily on numpy
+# 2.2.6, so if this is an ABI mismatch it is specific to the 2.10.0 Linux
+# build.)
+
 libroadrunner==2.10.0
 antimony
-numpy
+numpy<2
 streamlit
 plotly
 anthropic
