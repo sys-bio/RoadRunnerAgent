@@ -45,6 +45,8 @@ whether the agent can be hosted. See "Where we are" at the bottom.
 .venv/Scripts/python.exe evaluate.py --cases all --model claude-sonnet-5
 .venv/Scripts/python.exe evaluate.py --report results/<stamp>
 .venv/Scripts/python.exe evaluate.py --rescore results/<stamp>   # free
+.venv/Scripts/python.exe evaluate.py --cases all --sandbox       # in a worker
+RRAGENT_SANDBOX=0 .venv/Scripts/python.exe app.py                # GUI, unsandboxed
 ```
 
 ## Layout
@@ -256,3 +258,54 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
    long-lived ASGI process (Fly, Render, Cloud Run) means `app.py` runs
    as-is *and* per-session containers become possible, which is the only
    real answer to (1).
+
+### Next actions, in order
+
+1. **Get a working API key.** The old one was pasted into a chat transcript
+   on 2026-09-03 and must be treated as compromised - revoke it and create a
+   replacement. Prefer a **workspace-scoped** key: the current identity-linked
+   arrangement is why `make_client()` must send an `anthropic-workspace-id`
+   header, and why a missing `ANTHROPIC_WORKSPACE_ID` returns 400, which
+   reads like an auth failure but is not.
+
+   `setx` only affects processes started afterwards, and new Windows Terminal
+   *tabs* inherit the environment of the already-running Terminal process -
+   so close every Terminal window, not just the tab. Check without printing
+   the secret:
+
+```bash
+reg query HKCU\Environment /v ANTHROPIC_API_KEY >/dev/null 2>&1 && echo persisted
+echo "key: ${ANTHROPIC_API_KEY:+set}"
+```
+
+2. **Run one case through the sandbox** - the only thing about it still
+   unverified, because no key was available in the session that built it.
+   About $0.05:
+
+```bash
+.venv/Scripts/python.exe evaluate.py --cases goodwin_damped --model claude-sonnet-5 --sandbox
+```
+
+   If it classifies and reports as it used to, the sandbox is transparent to
+   the agent loop and this work is finished. What is *already* proven without
+   an API key: all 8 cases build byte-identical handoffs sandboxed or not
+   (bar `stochastic_variation`'s RNG seed), and the GUI loads, plots and
+   edits live parameters through a worker - checked in a browser.
+
+3. **Decide where this is hosted.** This is the last open question and it
+   shapes everything after it.
+
+   - *Community Cloud* means porting 1,057 lines of NiceGUI to Streamlit, and
+     ends on a platform that still cannot isolate viewers from each other.
+     Defensible only for a few named colleagues behind a password, with
+     bring-your-own-key.
+   - *Fly / Render / Cloud Run* runs `app.py` as-is - NiceGUI is ASGI, so
+     there is no UI port at all - and can give a container per session, which
+     is the only real answer to the filesystem, network and CPU abuse the
+     worker subprocess deliberately does not close.
+
+   **The recommendation is the second.** The UI port is the largest piece of
+   work on the table and it buys the weaker security story.
+
+   Keep the Streamlit deployment as what it now is: a free public probe
+   showing the RoadRunner stack installs and behaves on Linux.
