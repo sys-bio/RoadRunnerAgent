@@ -1,227 +1,237 @@
 """Deployment probe for Streamlit Community Cloud.
 
-Answers, on the host itself, the questions that decide whether the agent can
-be hosted there at all:
+The first deployment segfaulted: the packages installed cleanly and then the
+process died in native code, so no Python traceback ever appeared. A segfault
+cannot be caught in-process, so every risky import and every RoadRunner call
+happens in a SUBPROCESS here. A crash then shows up as an exit code
+(-11 = SIGSEGV) attached to a named step, instead of taking the app with it.
 
-  1. Does the stack install, and how much memory does it take?
-  2. Does the model load *without* tellurium? (tellurium adds ~114 MB of
-     wheels for one function call.)
-  3. Do the three RoadRunner behaviours this project depends on still hold on
-     the version the host installs? They were verified against 2.9.1 locally;
-     Streamlit Cloud installs 2.10.0.
-  4. Is a simulation fast enough to be interactive?
+What it answers:
 
-Deploy this first, read the page, and only then decide whether to port the
-agent. It is a probe, not the app: it runs no agent and needs no API key.
+  1. Which import, if any, crashes - numpy, roadrunner, antimony.
+  2. Whether the three RoadRunner behaviours this project relies on still
+     hold on whatever version the host installed (verified locally on 2.9.1;
+     the host installs 2.10.0).
+  3. Simulation speed and peak memory.
+
+It runs no agent and needs no API key.
 """
 
 from __future__ import annotations
 
+import json
 import platform
+import subprocess
 import sys
-import time
+import textwrap
 
-import numpy as np
 import streamlit as st
 
 st.set_page_config(page_title="RoadRunner stack probe", page_icon="🧪",
                    layout="centered")
 st.title("RoadRunner stack probe")
-st.caption("Does the simulation stack install and behave on this host?")
-
-GOODWIN = """\
-// Goodwin oscillator: S3 represses its own production
-J1: -> S1;    v0/(1 + (S3/K)^n);
-J2: S1 -> S2; k1*S1;
-J3: S2 -> S3; k2*S2;
-J4: S3 -> ;   k3*S3;
-
-v0 = 8; K = 1; n = 8;
-k1 = 1; k2 = 1; k3 = 1;
-S1 = 0.1; S2 = 0.2; S3 = 0.3;
-"""
+st.caption("Where does the simulation stack break on this host?")
 
 
-def load_antimony(text: str):
-    """te.loada without tellurium.
+def run(label: str, code: str, timeout: int = 120) -> dict:
+    """Execute code in a fresh interpreter; report how it ended.
 
-    tellurium's only role in this project is this one call, and it costs
-    ~114 MB of wheels (rrplugins, scipy, pandas, phrasedml, libsbml).
+    Returns a dict with `ok`, `returncode`, `signal` (a readable name where
+    the process was killed), `stdout` and `stderr`.
     """
-    import antimony
-    import roadrunner
-
-    antimony.clearPreviousLoads()
-    if antimony.loadAntimonyString(text) < 0:
-        raise ValueError(antimony.getLastError())
-    sbml = antimony.getSBMLString(antimony.getMainModuleName())
-    return roadrunner.RoadRunner(sbml)
-
-
-def to_antimony(sbml: str) -> str:
-    """SBML -> Antimony, the job tellurium's getCurrentAntimony() does."""
-    import antimony
-
-    antimony.clearPreviousLoads()
-    if antimony.loadSBMLString(sbml) < 0:
-        raise ValueError(antimony.getLastError())
-    return antimony.getAntimonyString(antimony.getMainModuleName())
-
-
-def species_ids(rr):
-    """Without tellurium the id accessors live on rr.model, not rr."""
-    return list(rr.model.getFloatingSpeciesIds())
-
-
-def parameter_ids(rr):
-    return list(rr.model.getGlobalParameterIds())
-
-
-def rss_mb() -> float:
-    """Resident memory, or nan where the platform cannot say."""
     try:
-        import resource
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # Linux reports kilobytes, macOS bytes.
-        return peak / 1024 if sys.platform.startswith("linux") else peak / 2**20
-    except Exception:
-        return float("nan")
+        done = subprocess.run([sys.executable, "-c", textwrap.dedent(code)],
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"label": label, "ok": False, "returncode": None,
+                "signal": "timeout", "stdout": "", "stderr": ""}
+    signals = {-11: "SIGSEGV (segmentation fault)", -6: "SIGABRT",
+               -9: "SIGKILL (out of memory?)", -4: "SIGILL", -8: "SIGFPE"}
+    return {"label": label, "ok": done.returncode == 0,
+            "returncode": done.returncode,
+            "signal": signals.get(done.returncode, ""),
+            "stdout": done.stdout.strip(), "stderr": done.stderr.strip()[-1500:]}
 
 
-# ---------------------------------------------------------------- environment
+def show(result: dict) -> bool:
+    if result["ok"]:
+        st.success(f"{result['label']} - OK"
+                   + (f"\n\n```\n{result['stdout']}\n```" if result["stdout"]
+                      else ""))
+        return True
+    detail = result["signal"] or f"exit code {result['returncode']}"
+    st.error(f"{result['label']} - FAILED ({detail})")
+    if result["stderr"]:
+        st.code(result["stderr"], language="text")
+    return False
 
-st.subheader("1. Environment")
+
+# --------------------------------------------------------------- 1. versions
+
+st.subheader("1. What was installed")
 rows = {"python": platform.python_version(),
         "platform": platform.platform(),
         "libc": " ".join(platform.libc_ver()) or "n/a"}
-try:
-    import importlib.metadata as md
-    for package in ("libroadrunner", "antimony", "numpy", "streamlit",
-                    "plotly", "anthropic", "openai", "tellurium"):
-        try:
-            rows[package] = md.version(package)
-        except md.PackageNotFoundError:
-            rows[package] = "not installed"
-except Exception as exc:            # pragma: no cover - defensive
-    rows["metadata error"] = str(exc)
+import importlib.metadata as md
+for package in ("libroadrunner", "antimony", "numpy", "streamlit", "plotly",
+                "anthropic", "openai", "tellurium", "pandas"):
+    try:
+        rows[package] = md.version(package)
+    except md.PackageNotFoundError:
+        rows[package] = "not installed"
 st.table({"": list(rows), "value": list(rows.values())})
 
-if rows.get("tellurium", "").startswith("not"):
-    st.success("tellurium is absent, as intended - ~114 MB of wheels saved.")
-else:
-    st.warning("tellurium is installed; requirements.txt does not ask for it.")
+# ---------------------------------------------------------------- 2. imports
 
-# ------------------------------------------------------------------- loading
+st.subheader("2. Imports, each in its own process")
+st.caption("A segfault here kills only the subprocess, so we learn which one.")
 
-st.subheader("2. Loading a model without tellurium")
-try:
-    started = time.perf_counter()
-    rr = load_antimony(GOODWIN)
-    load_ms = (time.perf_counter() - started) * 1000
-    st.success(f"loaded in {load_ms:.0f} ms - "
-               f"species {species_ids(rr)}, "
-               f"parameters {parameter_ids(rr)}")
-except Exception as exc:
-    st.error(f"FAILED: {type(exc).__name__}: {exc}")
+ok_numpy = show(run("import numpy", """
+    import numpy
+    print("numpy", numpy.__version__)
+"""))
+
+ok_rr = show(run("import roadrunner", """
+    import roadrunner
+    print("roadrunner", roadrunner.__version__)
+"""))
+
+ok_anti = show(run("import antimony", """
+    import antimony
+    print("antimony loaded")
+"""))
+
+ok_both = show(run("import numpy then roadrunner together", """
+    import numpy
+    import roadrunner
+    print("both imported; numpy", numpy.__version__)
+"""))
+
+if not (ok_rr and ok_both):
+    st.warning(
+        "RoadRunner cannot be imported on this host. The most likely cause is "
+        "an ABI mismatch: a compiled extension built against numpy 1.x will "
+        "segfault under numpy 2.x. The fix is to pin numpy in "
+        "requirements.txt - try `numpy<2` - and redeploy."
+    )
     st.stop()
 
-# -------------------------------------------------------- documented hazards
+# ------------------------------------------------- 3. behaviour and 4. speed
 
 st.subheader("3. Behaviours this project depends on")
-st.caption("Verified locally against 2.9.1. If any of these differ on the "
-           "version installed here, session.py needs revisiting before the "
-           "agent is hosted.")
+st.caption("Verified locally against 2.9.1. Any difference here means "
+           "session.py needs revisiting before the agent is hosted.")
 
-checks = []
+PROBE = """
+    import json, time
+    import numpy as np
+    try:                      # Linux only; absent on Windows
+        import resource
+    except ImportError:
+        resource = None
+    import roadrunner, antimony
 
-# (a) The state trap belongs to getCurrentSBML, not to getSBML. Without
-# tellurium the choice is explicit, and getSBML() gives the model rather than
-# the state - so the reset/restore dance in model_antimony() is unnecessary
-# on this path.
-rr.reset()
-rr.k1 = 99.0
-rr.simulate(0, 40, 200)
-plain = to_antimony(rr.getSBML())
-current = to_antimony(rr.getCurrentSBML())
-plain_is_model = "k1 = 1" in plain and "S1 = 0.1" in plain
-current_is_state = "k1 = 99" in current and "S1 = 0.1" not in current
-checks.append((
-    "getSBML() gives the model; getCurrentSBML() gives the state",
-    plain_is_model and current_is_state,
-    "as on 2.9.1 - so model_antimony() can use getSBML() and skip the "
-    "reset/restore dance"
-    if plain_is_model and current_is_state
-    else f"DIFFERENT - getSBML is model: {plain_is_model}, "
-         f"getCurrentSBML is state: {current_is_state}"))
+    def loada(text):
+        antimony.clearPreviousLoads()
+        if antimony.loadAntimonyString(text) < 0:
+            raise ValueError(antimony.getLastError())
+        return roadrunner.RoadRunner(
+            antimony.getSBMLString(antimony.getMainModuleName()))
 
-# (b) reset() keeps parameter changes; resetAll() discards them.
-rr.reset()
-rr.k1 = 99.0
-rr.reset()
-kept = rr.k1 == 99.0
-rr.resetAll()
-discarded = rr.k1 != 99.0
-checks.append((
-    "reset() keeps parameter changes, resetAll() discards them",
-    kept and discarded,
-    "as documented" if kept and discarded
-    else f"DIFFERENT - reset kept={kept}, resetAll discarded={discarded}"))
+    def to_antimony(sbml):
+        antimony.clearPreviousLoads()
+        antimony.loadSBMLString(sbml)
+        return antimony.getAntimonyString(antimony.getMainModuleName())
 
-# (c) nleq2 solves a conserved-moiety model without help. If this ever
-# changes, the conserved_moiety evaluation case changes meaning.
-try:
-    cons = load_antimony("J1: S1 -> S2; k1*S1; J2: S2 -> S1; k2*S2;"
-                         " k1 = 0.6; k2 = 0.15; S1 = 10; S2 = 0;")
-    cons.steadyState()
-    moiety_ok = abs(cons.S1 - 2.0) < 1e-6
-    detail = f"S1 -> {cons.S1:.6f} (expected 2.0)"
-except Exception as exc:
-    moiety_ok, detail = False, f"raised {type(exc).__name__}: {exc}"
-checks.append(("nleq2 solves a conserved moiety unaided", moiety_ok, detail))
+    GOODWIN = '''
+    J1: -> S1; v0/(1 + (S3/K)^n);
+    J2: S1 -> S2; k1*S1;
+    J3: S2 -> S3; k2*S2;
+    J4: S3 -> ; k3*S3;
+    v0 = 8; K = 1; n = 8; k1 = 1; k2 = 1; k3 = 1;
+    S1 = 0.1; S2 = 0.2; S3 = 0.3;
+    '''
 
-for label, passed, detail in checks:
-    (st.success if passed else st.error)(
-        f"{'OK' if passed else 'CHANGED'} - {label}\n\n{detail}")
+    out = {}
+    rr = loada(GOODWIN)
+    out["species"] = list(rr.model.getFloatingSpeciesIds())
+    out["parameters"] = list(rr.model.getGlobalParameterIds())
+    out["roadrunner"] = roadrunner.__version__
 
-# ---------------------------------------------------------------- speed, size
+    # (a) getSBML gives the model; getCurrentSBML gives the state.
+    rr.reset(); rr.k1 = 99.0; rr.simulate(0, 40, 200)
+    plain = to_antimony(rr.getSBML())
+    current = to_antimony(rr.getCurrentSBML())
+    out["sbml_is_model"] = ("k1 = 1" in plain and "S1 = 0.1" in plain)
+    out["current_sbml_is_state"] = ("k1 = 99" in current
+                                    and "S1 = 0.1" not in current)
 
-st.subheader("4. Speed and footprint")
-rr.reset()
-rr.k1 = 1.0
-rr.resetAll()
-timings = []
-for _ in range(20):
-    rr.reset()
-    started = time.perf_counter()
-    rr.simulate(0, 100, 1000)
-    timings.append((time.perf_counter() - started) * 1000)
-median = float(np.median(timings))
-st.metric("simulation, 1000 points", f"{median:.1f} ms",
-          help="6.6 ms on the development machine. Interactive sliders need "
-               "this well under ~50 ms.")
-st.metric("peak resident memory", f"{rss_mb():.0f} MB",
-          help="Streamlit Community Cloud allows about 1 GB per app, shared "
-               "by every viewer.")
+    # (b) reset keeps parameter changes; resetAll discards them.
+    rr.reset(); rr.k1 = 99.0; rr.reset()
+    out["reset_keeps"] = rr.k1 == 99.0
+    rr.resetAll()
+    out["resetall_discards"] = rr.k1 != 99.0
 
-# --------------------------------------------------------------------- plot
+    # (c) nleq2 solves a conserved moiety unaided.
+    try:
+        cons = loada("J1: S1 -> S2; k1*S1; J2: S2 -> S1; k2*S2;"
+                     " k1 = 0.6; k2 = 0.15; S1 = 10; S2 = 0;")
+        cons.steadyState()
+        out["moiety_S1"] = float(cons.S1)
+    except Exception as exc:
+        out["moiety_error"] = f"{type(exc).__name__}: {exc}"
 
-st.subheader("5. Plotting")
-try:
-    import plotly.graph_objects as go
-    rr.reset()
-    data = np.asarray(rr.simulate(0, 100, 1000))
-    figure = go.Figure()
-    for index, name in enumerate(species_ids(rr), start=1):
-        figure.add_trace(go.Scatter(x=data[:, 0], y=data[:, index], name=name))
-    figure.update_layout(height=320, margin=dict(l=40, r=20, t=20, b=40),
-                         xaxis_title="time", yaxis_title="concentration")
-    st.plotly_chart(figure, use_container_width=True)
-    st.success("Plotly renders.")
-except Exception as exc:
-    st.error(f"plotting FAILED: {type(exc).__name__}: {exc}")
+    # speed
+    rr.resetAll()
+    times = []
+    for _ in range(20):
+        rr.reset()
+        t0 = time.perf_counter(); rr.simulate(0, 100, 1000)
+        times.append((time.perf_counter() - t0) * 1000)
+    out["sim_ms_median"] = float(np.median(times))
+    out["peak_rss_mb"] = (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                          / 1024) if resource else -1.0
+    print("JSON:" + json.dumps(out))
+"""
+
+result = run("model load, behaviours, timing", PROBE)
+if not show(result):
+    st.stop()
+
+payload = {}
+for line in result["stdout"].splitlines():
+    if line.startswith("JSON:"):
+        payload = json.loads(line[5:])
+
+if payload:
+    st.write(f"species `{payload['species']}` · parameters "
+             f"`{payload['parameters']}` · roadrunner "
+             f"`{payload['roadrunner']}`")
+
+    checks = [
+        ("getSBML() gives the model, getCurrentSBML() the state",
+         payload.get("sbml_is_model") and payload.get("current_sbml_is_state")),
+        ("reset() keeps parameter changes, resetAll() discards them",
+         payload.get("reset_keeps") and payload.get("resetall_discards")),
+        ("nleq2 solves a conserved moiety unaided (S1 -> 2.0)",
+         abs(payload.get("moiety_S1", -1) - 2.0) < 1e-6),
+    ]
+    for label, passed in checks:
+        (st.success if passed else st.error)(
+            f"{'OK' if passed else 'CHANGED from 2.9.1'} - {label}")
+    if "moiety_error" in payload:
+        st.error(f"steady state raised: {payload['moiety_error']}")
+
+    st.subheader("4. Speed and footprint")
+    left, right = st.columns(2)
+    left.metric("simulation, 1000 points",
+                f"{payload['sim_ms_median']:.1f} ms",
+                help="6.6 ms on the development machine.")
+    right.metric("peak resident memory", f"{payload['peak_rss_mb']:.0f} MB",
+                 help="Community Cloud allows roughly 1 GB per app, shared "
+                      "by every viewer.")
 
 st.divider()
 st.caption("This probe runs no agent and needs no API key. Hosting the agent "
-           "itself additionally requires sandboxing run_python - it executes "
-           "arbitrary Python, and on a shared host that reaches every "
-           "viewer's data and any key in the environment.")
+           "additionally requires sandboxing run_python, which executes "
+           "arbitrary Python.")
