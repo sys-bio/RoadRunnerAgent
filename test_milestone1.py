@@ -929,6 +929,87 @@ def test_detail_levels():
           agent.Handoff(detail="thorough").detail == "thorough")
 
 
+def test_worker_sandbox():
+    """The subprocess sandbox: no credentials, state that persists, crash
+    recovery.
+
+    This is the security boundary, so the checks are about what agent code
+    *cannot* reach as much as what it can. It costs a few seconds - the
+    worker imports tellurium - but a silent regression here is the kind that
+    hands a stranger an API key.
+    """
+    import os
+    from remote import WorkerSession, WorkerCrashed
+
+    canary = "sk-canary-do-not-leak"
+    os.environ["ANTHROPIC_API_KEY"] = canary
+    os.environ["A_PRIVATE_SETTING"] = canary
+
+    with WorkerSession(timeout=20) as w:
+        env = w._request("environment")
+        check("worker cannot see ANTHROPIC_API_KEY",
+              "ANTHROPIC_API_KEY" not in env)
+        check("worker cannot see unrelated host variables",
+              "A_PRIVATE_SETTING" not in env)
+        check("no allowlisted variable carries the canary",
+              not any(canary in v for v in env.values()))
+        check("worker gets a scratch home, not the user's",
+              env.get("HOME", "") not in ("", os.path.expanduser("~")))
+
+        out, _ = w.run("import os; print(os.environ.get('ANTHROPIC_API_KEY'))")
+        check("agent code reads no key out of the environment",
+              "None" in out and canary not in out)
+
+        w.load(MODEL)
+        check("model loads in the worker",
+              sorted(w.rr.getFloatingSpeciesIds()) == ["S1", "S2"])
+        check("values read through the facade", w.rr.k1 == 1.0)
+        w.rr.k1 = 3.5
+        check("values write through the facade", w.rr["k1"] == 3.5)
+
+        out, is_error = w.run("kept = 21")
+        check("assignment produces no output", out == "(no output)" and not is_error)
+        out, _ = w.run("kept * 2")
+        check("the namespace persists between calls", out.strip() == "42")
+        out, _ = w.run("rr.k1")
+        check("agent code sees the host's parameter change",
+              out.strip() == "3.5")
+
+        result = w.simulate(0, 10, 5)
+        check("simulate returns rows across the pipe", result.shape[0] == 5)
+        check("simulate keeps its column names",
+              result.colnames[0] == "time"
+              and result.shape[1] == len(result.colnames))
+
+        out, is_error = w.run("1/0")
+        check("an exception is an error result, not a crash",
+              is_error and "ZeroDivisionError" in out)
+
+        out, is_error = w.run("import os; os._exit(1)")
+        check("a process death is reported, not raised",
+              is_error and "died" in out)
+        check("the agent is told its namespace is gone", "restarted" in out)
+        out, is_error = w.run("print(rr.getFloatingSpeciesIds())")
+        check("the worker restarts with the model reloaded",
+              not is_error and "S1" in out)
+        out, is_error = w.run("kept")
+        check("variables really are gone after a restart",
+              is_error and "NameError" in out)
+
+    w2 = WorkerSession(timeout=3)
+    try:
+        out, is_error = w2.run("while True: pass")
+        check("a hang is killed and reported", is_error and "did not answer" in out)
+        out, is_error = w2.run("21 + 21")
+        check("the worker is usable after a hang",
+              not is_error and out.strip() == "42")
+    finally:
+        w2.close()
+
+    for name in ("ANTHROPIC_API_KEY", "A_PRIVATE_SETTING"):
+        os.environ.pop(name, None)
+
+
 if __name__ == "__main__":
     test_session_basics()
     test_diff_and_revert()
@@ -949,6 +1030,7 @@ if __name__ == "__main__":
     test_wind_up_forces_a_report()
     test_semicolon_is_a_separator_not_a_terminator()
     test_detail_levels()
+    test_worker_sandbox()
 
     print()
     if FAILURES:

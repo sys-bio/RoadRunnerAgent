@@ -15,7 +15,7 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   repaired by its documented fix.
 - Best measured run: **8/8 classification, 8/8 cause, 8/8 changes reported,
   8/8 session-state honest, $0.23** for the whole set at sonnet-5/low.
-- `test_milestone1.py`: **191 checks**, no API key needed. Run it after any
+- `test_milestone1.py`: **211 checks**, no API key needed. Run it after any
   change; it is the safety net for everything below.
 
 **Current task:** deploying a probe to Streamlit Community Cloud to decide
@@ -56,6 +56,8 @@ whether the agent can be hosted. See "Where we are" at the bottom.
 | `providers.py` | Anthropic and OpenAI-compatible (DeepSeek) behind one interface |
 | `prompts.py` | System prompt (brief/thorough), Antimony reference, hazards, handoff payload |
 | `app.py` | NiceGUI GUI - the only UI-specific file (1,057 lines; the rest is UI-agnostic) |
+| `worker.py` | The subprocess that owns the Session and runs agent code |
+| `remote.py` | Host-side `WorkerSession`: spawns the worker, proxies the Session |
 | `evaluate.py` | Runs the case set, scores it, saves JSON |
 | `cases/` | 8 cases with ground truth |
 | `streamlit_app.py` | Deployment probe for Streamlit Cloud (not the app) |
@@ -124,20 +126,40 @@ which is why `--detail thorough` tells the agent to compute thresholds for
 - Add a regression test for anything a real run exposes.
 - Do not spend the user's API credits without saying so. `--estimate` first.
 
-## Security - unresolved, and it gates hosting
+## Security - credential theft is closed, the rest is not
 
-`run_python` is an unsandboxed `exec` in the host process. Acceptable for one
-user on their own machine; **not acceptable hosted**. A public app means
-strangers' code running in your container, reaching every key in the
-environment and every other viewer's data. Bring-your-own-key fixes billing,
-not this.
+`run_python` used to be an unsandboxed `exec` in the host process: agent code
+could read `os.environ` and walk off with every key there.
 
-Prerequisite for hosting: move `run_python` into a worker subprocess with an
-empty environment, holding the RoadRunner instance for the session so `rr`
-state still persists across tool calls. That closes credential theft; it does
-not close filesystem, network or resource abuse, which need per-session
-containers (Community Cloud cannot give those - one container serves all
-viewers).
+**That is now fixed.** `worker.py` holds the Session and the exec namespace in
+a subprocess started with an *allowlisted* environment (`remote.py`), so there
+are no credentials in the process where agent code runs. An allowlist, not a
+denylist - a denylist has to anticipate every name worth stealing, and the one
+it forgets is the one that matters. The worker also gets a scratch home
+directory rather than the user's, because tellurium's import chain reaches
+parso, which demands a home, and the real one points at `~/.aws` and `~/.ssh`.
+
+Use it by passing a `WorkerSession` where a `Session` would go; `agent.ask()`
+takes either. The in-process `PythonRunner` remains for single-user local runs
+and for the tests.
+
+Three properties the tests pin down, because a silent regression here hands a
+stranger an API key:
+
+- a key set in the parent is not visible in the child, nor to agent code;
+- a process death (`os._exit`, a native segfault) and a hang both come back as
+  ordinary error results, and the worker restarts with the model reloaded;
+- state persists across tool calls, so `rr` and the agent's variables survive
+  between turns exactly as they did in-process.
+
+**Still open, and unfixable in one shared container:** the filesystem, the
+network, and CPU/memory. Agent code in the worker can still read what the host
+user can read and open sockets. Only per-session containers close those, which
+Streamlit Community Cloud cannot give - one container serves every viewer.
+
+**Nothing crossing the boundary is ever pickled.** The worker runs untrusted
+code; unpickling what it sends would hand that code the host process it was
+moved out of. JSON only, one object per line.
 
 ## Where we are
 
@@ -199,10 +221,12 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
 
 ### What blocks hosting the agent
 
-1. **`run_python` is an unsandboxed `exec` in the host process.** See
-   "Security" above. This is the real gate and it is unchanged. Community
-   Cloud runs one container for all viewers, so it cannot give the
-   per-session isolation this needs.
+1. **Sandboxing is half done.** Credential theft is closed (see "Security");
+   filesystem, network and resource abuse are not, and need a container per
+   session, which Community Cloud cannot give. `app.py` has not been moved
+   onto `WorkerSession` yet - it still holds an in-process `Session` and
+   touches `session.rr` in five places, all of them ids and single values
+   that `remote.RemoteModel` already covers.
 2. **There is no Streamlit UI for the agent.** `app.py` is NiceGUI
    (1,057 lines); `streamlit_app.py` is only the probe. Hosting on
    Community Cloud means porting the UI; hosting somewhere that runs a

@@ -541,7 +541,11 @@ def ask(session, question: str, *, client: anthropic.Anthropic | None = None,
     The follow-up must use the same provider as the run it continues; message
     formats are not interchangeable between vendors.
     """
-    runner = PythonRunner(session)
+    # A WorkerSession already runs code in its own process and satisfies the
+    # same (output, is_error) contract, so it *is* the runner. A plain
+    # Session needs the in-process one - fine on a single-user machine,
+    # unacceptable hosted (see remote.py).
+    runner = session if hasattr(session, "run") else PythonRunner(session)
     handoff = Handoff(model=model, effort=effort, detail=detail)
 
     resuming = previous is not None and previous.messages
