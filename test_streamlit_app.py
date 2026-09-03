@@ -16,6 +16,7 @@ the test that fails if anyone moves it back.
 
 from __future__ import annotations
 
+import pathlib
 import re
 import sys
 
@@ -206,6 +207,47 @@ check("no exception", not at.exception)
 check("it asks for a key instead of failing mid-run",
       any("API key" in w.value for w in at.warning))
 check("and nothing was spent", at.session_state["handoff"] is None)
+
+print("behind a password, the page is still fully populated")
+# The fault this pins down reached the deployment because no test set a
+# password. `init_state()` ran before the gate, seeding source/question/
+# start/end/points as plain values on a run that rendered none of their
+# widgets - and Streamlit discards state for widgets a run did not build.
+# The boxes came up empty and the point count fell under the solver's
+# minimum. The plot still drew, which made it look like a display bug.
+secrets = pathlib.Path(".streamlit/secrets.toml")
+if secrets.exists():
+    print("  skipped - .streamlit/secrets.toml already exists, leaving it alone")
+else:
+    secrets.parent.mkdir(exist_ok=True)
+    secrets.write_text('APP_PASSWORD = "test-only-password"\n',
+                       encoding="utf-8")
+    try:
+        at = fresh()
+        check("the gate is shown when a password is configured",
+              any(t.label == "Password" for t in at.text_input))
+        check("and nothing else is", not at.text_area)
+
+        at.text_input[0].set_value("wrong").run()
+        check("a wrong password does not let you in",
+              any(t.label == "Password" for t in at.text_input))
+
+        at.text_input[0].set_value("test-only-password").run()
+        check("the right one does", not at.exception and bool(at.text_area))
+        values = {n.label: n.value for n in at.number_input}
+        check("start, end and points survive the gate",
+              (values.get("start"), values.get("end"), values.get("points"))
+              == (0.0, 100.0, 1000))
+        check("the point count is never below the solver's minimum",
+              values.get("points", 0) >= 2)
+        check("the model text survives it too",
+              len(at.session_state["source"]) > 100)
+        check("and so does the sample question",
+              "oscillator" in at.session_state["question"])
+        check("the model is loaded and its sliders built",
+              "n" in [s.label for s in at.slider])
+    finally:
+        secrets.unlink()
 
 print()
 if FAILED:

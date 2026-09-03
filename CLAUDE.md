@@ -17,8 +17,9 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   8/8 session-state honest, $0.23** for the whole set at sonnet-5/low.
 - `test_milestone1.py`: **223 checks**, no API key needed. Run it after any
   change; it is the safety net for everything below.
-- `test_streamlit_app.py`: **19 checks** on the hosted build, also free -
-  real page builds driven through real widgets via Streamlit's `AppTest`.
+- `test_streamlit_app.py`: **53 checks** on the hosted build, also free -
+  real page builds driven through real widgets via Streamlit's `AppTest`,
+  including the password-gated path.
 
 **Current task:** deploying `streamlit_app.py` - the agent UI, now ported to
 Streamlit and verified in a browser. The simulation stack is proven on Linux
@@ -76,7 +77,8 @@ RRAGENT_SANDBOX=0 .venv/Scripts/python.exe app.py                # GUI, unsandbo
 | `cases/` | 8 cases with ground truth |
 | `streamlit_app.py` | **The hosted app** - the agent UI, ported to Streamlit |
 | `pages/2_Deployment_probe.py` | The old probe: proves the stack installs on Linux |
-| `test_streamlit_app.py` | 19 headless checks on the hosted build, no key needed |
+| `test_streamlit_app.py` | 53 headless checks on the hosted build, no key needed |
+| `gate.py` | The shared password gate - every page must call it |
 
 ## Verified facts - do not re-derive, do not assume
 
@@ -306,9 +308,9 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
    during a run nothing can touch a widget, so `on_event` paints into a
    container as events arrive and the feed streams fine.
 
-### Three Streamlit rules this port had to learn
+### Five Streamlit rules this port had to learn
 
-All three produced a working-looking page that was quietly wrong.
+All five produced a working-looking page that was quietly wrong.
 
 - **`streamlit run` re-executes the whole file on every interaction.** A
   module-level `_SESSIONS = {}` is therefore rebuilt each time, so the app
@@ -319,6 +321,24 @@ All three produced a working-looking page that was quietly wrong.
   report's buttons rewrite the model text box, which is rendered above them.
   Hence `queue()` / `apply_pending()`: park the value, apply it at the top of
   the next run.
+- **Seed session state *after* the password gate, not before.** Streamlit
+  discards state for widgets a run did not render. `init_state()` ran ahead
+  of `password_gate()`, so `source`, `question`, `start`, `end` and `points`
+  were seeded on a run that built none of their widgets and were gone by the
+  time the boxes were drawn - empty fields, and a point count under the
+  solver's minimum, so the error named the solver rather than the field. The
+  plot still rendered, which made it look like a display bug. **This is
+  invisible locally unless a password is set**, which is why it reached the
+  deployment; `test_streamlit_app.py` now writes a temporary
+  `.streamlit/secrets.toml` and drives the gated path.
+- **Every page needs its own gate.** `pages/` are independently reachable,
+  by URL and from the sidebar, so `password_gate()` in `streamlit_app.py`
+  guarded that file and nothing else - the probe page was open to anyone
+  with the deployment's address. The gate lives in `gate.py` and both pages
+  call it; `authorised` is session state, so answering once covers the app.
+- **`st.secrets` is cached once read.** A test that configures a password
+  cannot un-configure it for later tests in the same process, so the gated
+  checks run last.
 - **There is no disconnect event.** `app.py` kills a tab's worker from
   `client.on_disconnect`; Streamlit has no equivalent, so a closed tab would
   leak a subprocess until the box died. Sessions carry a last-touched stamp
