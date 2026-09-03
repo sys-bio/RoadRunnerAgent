@@ -15,7 +15,7 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   repaired by its documented fix.
 - Best measured run: **8/8 classification, 8/8 cause, 8/8 changes reported,
   8/8 session-state honest, $0.23** for the whole set at sonnet-5/low.
-- `test_milestone1.py`: **211 checks**, no API key needed. Run it after any
+- `test_milestone1.py`: **215 checks**, no API key needed. Run it after any
   change; it is the safety net for everything below.
 
 **Current task:** deploying a probe to Streamlit Community Cloud to decide
@@ -154,7 +154,19 @@ Two things the proxy has to get right, both of which bit once:
   disagree from then on.
 - **`apply_recommendation` runs inside the worker.** It reaches
   `rr.setIntegrator` and `rr.integrator.setValue` - solver objects that
-  cannot cross a pipe - so the whole call is one op, not several.
+  cannot cross a pipe - so the whole call is one op, not several. Case
+  `SETUP` functions reach the same objects and go over as `setup_case`.
+- **An exception must arrive wearing its own type name.** Callers format
+  errors as `f"{type(exc).__name__}: {exc}"`, so folding the type into the
+  message in the worker produced `RuntimeError: RuntimeError: CVODE Error
+  ...` - which went into the question the agent was asked, and nothing
+  failed loudly. The type crosses as its own field and `remote._worker_error`
+  rebuilds a `WorkerError` subclass wearing that name.
+
+`evaluate.py --sandbox` runs the case set this way; without the flag it uses
+an in-process Session, which starts ~4.5s sooner per case. All 8 cases build
+byte-identical handoffs either way, except `stochastic_variation`, which
+differs by its RNG seed - which is the point of that case.
 
 Three properties the tests pin down, because a silent regression here hands a
 stranger an API key:

@@ -116,6 +116,20 @@ class Worker:
     def op_setattr(self, name: str, value: Any) -> None:
         setattr(self.session, name, value)
 
+    def op_setup_case(self, name: str) -> bool:
+        """Run an evaluation case's SETUP against this worker's session.
+
+        Case setups reach `rr.setIntegrator` and `rr.integrator.setValue` -
+        solver objects, which cannot cross the pipe - so the setup runs here.
+        Cases are trusted project code, not agent input.
+        """
+        import cases
+        case = cases.load(name)
+        if hasattr(case, "SETUP"):
+            case.SETUP(self.session)
+            return True
+        return False
+
     def op_recommend(self, change: dict) -> str:
         """Apply one recommendation here, where the live objects are.
 
@@ -203,8 +217,12 @@ def main() -> int:
             # A one-line summary for the caller to show a person, and the
             # traceback alongside it for whoever is debugging. A UI toast
             # carrying forty lines of stack helps nobody.
-            reply({"ok": False,
-                   "error": f"{type(exc).__name__}: {exc}",
+            # The type travels separately from the message. Callers format
+            # errors as f"{type(exc).__name__}: {exc}", and folding the type
+            # into the message here would double it on the far side - which
+            # then lands in the question the agent is asked.
+            reply({"ok": False, "error": str(exc),
+                   "error_type": type(exc).__name__,
                    "traceback": traceback.format_exc()})
     return 0
 

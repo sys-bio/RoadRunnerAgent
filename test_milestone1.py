@@ -985,6 +985,25 @@ def test_worker_sandbox():
         check("an exception is an error result, not a crash",
               is_error and "ZeroDivisionError" in out)
 
+        # Callers render errors as f"{type(exc).__name__}: {exc}", so an
+        # exception must arrive wearing its own name. Getting this wrong put
+        # "RuntimeError: RuntimeError: CVODE Error ..." into the question the
+        # agent was asked, and nothing failed loudly.
+        try:
+            w.simulate(0, 10, 5, ["time", "nosuchspecies"])
+            raised = None
+        except Exception as exc:
+            raised = exc
+        check("a worker exception is re-raised on the host", raised is not None)
+        check("it keeps the original type's name",
+              raised is not None and "RuntimeError" not in
+              f"{type(raised).__name__}: {raised}".removeprefix(
+                  type(raised).__name__ + ": "))
+        check("it is still catchable as RuntimeError",
+              isinstance(raised, RuntimeError))
+        check("the traceback is kept for debugging",
+              "Traceback" in w.last_traceback)
+
         out, is_error = w.run("import os; os._exit(1)")
         check("a process death is reported, not raised",
               is_error and "died" in out)

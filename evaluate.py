@@ -148,11 +148,26 @@ def mechanically_failed(record: dict) -> bool:
     return not record.get("stopped_because", "").startswith("completed")
 
 
-def run_one(case_name: str, repeat: int, kwargs: dict) -> dict:
+def run_one(case_name: str, repeat: int, kwargs: dict,
+            sandboxed: bool = False) -> dict:
     import agent
 
     case = cases.load(case_name)
-    session, sim_error = run_case.build_session(case)
+    session, sim_error = run_case.build_session(case, sandboxed=sandboxed)
+    try:
+        return _run_one(case, case_name, repeat, kwargs, session, sim_error)
+    finally:
+        # A sandboxed case owns a subprocess; the case set must not leave one
+        # running per case.
+        closer = getattr(session, "close", None)
+        if closer is not None:
+            closer()
+
+
+def _run_one(case, case_name: str, repeat: int, kwargs: dict,
+             session, sim_error) -> dict:
+    import agent
+
     question = case.QUESTION
     if sim_error:
         question += f"\n\n(The simulation raises: {sim_error})"
@@ -281,6 +296,10 @@ def main(argv=None) -> int:
                              "one rung up. Each rung is model:effort or a "
                              f"bare effort. Default: {DEFAULT_LADDER}")
     parser.add_argument("--max-turns", type=int, default=None)
+    parser.add_argument("--sandbox", action="store_true",
+                        help="run the model and the agent's code in a worker "
+                             "subprocess with no credentials in its "
+                             "environment, as the GUI does")
     parser.add_argument("--out", default="results")
     parser.add_argument("--estimate", action="store_true",
                         help="print the cost estimate and exit")
@@ -403,7 +422,8 @@ def main(argv=None) -> int:
                 level = f"{rung_model.replace('claude-', '')}/{rung_effort}"
                 attempt_kwargs = dict(kwargs, model=rung_model,
                                       effort=rung_effort)
-                record = run_one(name, repeat, attempt_kwargs)
+                record = run_one(name, repeat, attempt_kwargs,
+                                 sandboxed=args.sandbox)
                 record["escalation_ladder"] = [f"{m}:{e}" for m, e in ladder]
                 attempts.append(record)
                 checks = record.get("checks", {})

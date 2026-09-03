@@ -57,6 +57,30 @@ class WorkerCrashed(RuntimeError):
     """The worker died - a native crash, a kill, or a hang we gave up on."""
 
 
+class WorkerError(RuntimeError):
+    """An exception raised inside the worker, re-raised here."""
+
+
+_ERROR_TYPES: dict = {}
+
+
+def _worker_error(name: str, message: str) -> WorkerError:
+    """Rebuild the exception under its original name.
+
+    Callers render errors as f"{type(exc).__name__}: {exc}". If everything
+    from the worker arrived as a plain RuntimeError, a RoadRunner failure
+    would read "RuntimeError: RuntimeError: CVODE Error ...", and that text
+    goes into the question the agent is asked. So the name is carried across
+    and a subclass of WorkerError wearing it is made on demand - close
+    enough to be indistinguishable in a message, still catchable as
+    RuntimeError, and never the real class, which this process may not have.
+    """
+    cls = _ERROR_TYPES.get(name)
+    if cls is None:
+        cls = _ERROR_TYPES[name] = type(name, (WorkerError,), {})
+    return cls(message)
+
+
 class WorkerSession:
     """A `Session` living in another process."""
 
@@ -190,7 +214,8 @@ class WorkerSession:
         if not reply.get("ok"):
             #: Kept for debugging; the exception carries only the summary.
             self.last_traceback = reply.get("traceback", "")
-            raise RuntimeError(reply.get("error", "unknown worker error"))
+            raise _worker_error(reply.get("error_type", "WorkerError"),
+                                reply.get("error", "unknown worker error"))
         return reply.get("value")
 
     def _request(self, op: str, timeout: float | None = None,
@@ -255,6 +280,10 @@ class WorkerSession:
             self._request("setattr", name=name, value=value)
         else:
             object.__setattr__(self, name, value)
+
+    def setup_case(self, name: str) -> bool:
+        """Run an evaluation case's SETUP inside the worker."""
+        return self._request("setup_case", name=name)
 
     def apply_recommendation(self, change: dict) -> str:
         """Apply one report recommendation inside the worker."""

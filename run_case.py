@@ -16,12 +16,25 @@ import prompts
 from session import Session
 
 
-def build_session(case) -> tuple[Session, str | None]:
-    """Reproduce the state the user was in when they gave up."""
-    session = Session()
+def build_session(case, sandboxed: bool = False):
+    """Reproduce the state the user was in when they gave up.
+
+    With `sandboxed`, the model and the agent's code live in a worker
+    subprocess with no credentials in its environment (see remote.py) - the
+    same arrangement the GUI uses. Off by default: scoring runs are trusted
+    local code, and an in-process Session starts ~4.5s sooner per case.
+    """
+    if sandboxed:
+        from remote import WorkerSession
+        session = WorkerSession()
+    else:
+        session = Session()
     session.load(case.MODEL)
     if hasattr(case, "SETUP"):
-        case.SETUP(session)
+        if sandboxed:
+            session.setup_case(case.__name__.rsplit(".", 1)[-1])
+        else:
+            case.SETUP(session)
 
     sim_error = None
     start, end, points = case.SIMULATION
