@@ -22,7 +22,30 @@ from nicegui import run, ui
 
 import agent as agent_config
 import cases
+from remote import WorkerSession
 from session import Session, apply_recommendation, coerce
+
+#: Agent code runs in a subprocess with no credentials in its environment
+#: (see remote.py). Set RRAGENT_SANDBOX=0 for the old in-process behaviour -
+#: faster to start and easier to debug, but `run_python` can then read every
+#: key the GUI can. Never do that on a machine other people can reach.
+SANDBOXED = os.environ.get("RRAGENT_SANDBOX", "1") != "0"
+
+
+def new_session():
+    """One session per browser tab, sandboxed unless told otherwise."""
+    return WorkerSession() if SANDBOXED else Session()
+
+
+def apply_change(session, change) -> str:
+    """Apply a recommendation wherever the model actually lives.
+
+    A WorkerSession does it inside the worker: `apply_recommendation` reaches
+    solver objects that cannot cross the pipe.
+    """
+    if isinstance(session, WorkerSession):
+        return session.apply_recommendation(change)
+    return apply_recommendation(session, change)
 
 PALETTE = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed",
            "#0891b2", "#db2777", "#65a30d"]
@@ -35,7 +58,7 @@ class AppState:
     """Everything one browser session owns."""
 
     def __init__(self) -> None:
-        self.session = Session()
+        self.session = new_session()
         self.events: collections.deque = collections.deque()
         self.busy = False
         self.stop_requested = False
@@ -61,6 +84,18 @@ def _fmt(value: Any) -> str:
 @ui.page("/")
 def main_page() -> None:
     state = AppState()
+
+    # One worker process per browser tab, so a closed tab must not leave one
+    # behind - on a hosted deployment that is how a box runs out of memory.
+    def release_session() -> None:
+        closer = getattr(state.session, "close", None)
+        if closer is not None:
+            closer()
+
+    try:
+        ui.context.client.on_disconnect(release_session)
+    except Exception:  # older NiceGUI; the worker then dies with the server
+        pass
     ui.dark_mode(False)
 
     ui.add_head_html("""
@@ -708,8 +743,7 @@ def main_page() -> None:
                     for change in handoff.report.recommended_changes:
                         kind = change.get("kind", "value")
                         try:
-                            described = apply_recommendation(
-                                state.session, change)
+                            described = apply_change(state.session, change)
                             if kind == "model_text":
                                 source.value = change["model_text"].strip()
                                 source.update()

@@ -67,7 +67,10 @@ class WorkerSession:
         self._stderr: list[str] = []
         self._source_antimony = ""
         self._home = ""
-        self.start()
+        self.last_traceback = ""
+        # Deliberately not started here. Starting means importing tellurium,
+        # which takes seconds; a GUI that builds one of these per browser
+        # session should not pay for it until a model is actually loaded.
 
     # ------------------------------------------------------------ lifecycle
 
@@ -185,12 +188,16 @@ class WorkerSession:
             raise WorkerCrashed(self._diagnosis())
         reply = json.loads(line)
         if not reply.get("ok"):
+            #: Kept for debugging; the exception carries only the summary.
+            self.last_traceback = reply.get("traceback", "")
             raise RuntimeError(reply.get("error", "unknown worker error"))
         return reply.get("value")
 
     def _request(self, op: str, timeout: float | None = None,
                  **args: Any) -> Any:
-        if self._process is None or self._process.poll() is not None:
+        if self._process is None:
+            self.start()
+        elif self._process.poll() is not None:
             raise WorkerCrashed(self._diagnosis())
         try:
             self._process.stdin.write(
@@ -236,6 +243,22 @@ class WorkerSession:
         self._request("call", name="load", args=[antimony_text], kwargs={})
         self._source_antimony = antimony_text
         return self
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Send Session's own attributes across; keep our own here.
+
+        Without this, `session.last_sim = None` - which the GUI does when a
+        simulation fails - would quietly create an attribute on the proxy
+        that shadows the worker's, and the two would disagree from then on.
+        """
+        if name in _SESSION_ATTRIBUTES:
+            self._request("setattr", name=name, value=value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def apply_recommendation(self, change: dict) -> str:
+        """Apply one report recommendation inside the worker."""
+        return self._request("recommend", change=change)
 
     def __getattr__(self, name: str) -> Any:
         """Forward Session's own methods and attributes.

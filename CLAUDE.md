@@ -55,7 +55,7 @@ whether the agent can be hosted. See "Where we are" at the bottom.
 | `agent.py` | `run_python` executor, `submit_report` schema, the agent loop |
 | `providers.py` | Anthropic and OpenAI-compatible (DeepSeek) behind one interface |
 | `prompts.py` | System prompt (brief/thorough), Antimony reference, hazards, handoff payload |
-| `app.py` | NiceGUI GUI - the only UI-specific file (1,057 lines; the rest is UI-agnostic) |
+| `app.py` | NiceGUI GUI - the only UI-specific file; runs on a `WorkerSession` |
 | `worker.py` | The subprocess that owns the Session and runs agent code |
 | `remote.py` | Host-side `WorkerSession`: spawns the worker, proxies the Session |
 | `evaluate.py` | Runs the case set, scores it, saves JSON |
@@ -140,8 +140,21 @@ directory rather than the user's, because tellurium's import chain reaches
 parso, which demands a home, and the real one points at `~/.aws` and `~/.ssh`.
 
 Use it by passing a `WorkerSession` where a `Session` would go; `agent.ask()`
-takes either. The in-process `PythonRunner` remains for single-user local runs
-and for the tests.
+takes either. **`app.py` does this by default** - one worker per browser tab,
+closed when the tab disconnects. Set `RRAGENT_SANDBOX=0` for the old
+in-process behaviour, which is faster to start and easier to debug and which
+lets agent code read every key the GUI can. The in-process `PythonRunner`
+remains for that mode and for the tests.
+
+Two things the proxy has to get right, both of which bit once:
+
+- **Attribute writes must cross the pipe.** `app.py` does
+  `session.last_sim = None`; without `WorkerSession.__setattr__` that
+  silently makes a proxy-local attribute shadowing the worker's, and the two
+  disagree from then on.
+- **`apply_recommendation` runs inside the worker.** It reaches
+  `rr.setIntegrator` and `rr.integrator.setValue` - solver objects that
+  cannot cross a pipe - so the whole call is one op, not several.
 
 Three properties the tests pin down, because a silent regression here hands a
 stranger an API key:
@@ -221,12 +234,10 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
 
 ### What blocks hosting the agent
 
-1. **Sandboxing is half done.** Credential theft is closed (see "Security");
-   filesystem, network and resource abuse are not, and need a container per
-   session, which Community Cloud cannot give. `app.py` has not been moved
-   onto `WorkerSession` yet - it still holds an in-process `Session` and
-   touches `session.rr` in five places, all of them ids and single values
-   that `remote.RemoteModel` already covers.
+1. **Sandboxing is half done.** Credential theft is closed (see "Security")
+   and the GUI runs on it. Filesystem, network and resource abuse are not
+   closed, and need a container per session, which Community Cloud cannot
+   give - one container serves every viewer.
 2. **There is no Streamlit UI for the agent.** `app.py` is NiceGUI
    (1,057 lines); `streamlit_app.py` is only the probe. Hosting on
    Community Cloud means porting the UI; hosting somewhere that runs a

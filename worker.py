@@ -113,6 +113,20 @@ class Worker:
     def op_attr(self, name: str) -> Any:
         return _jsonable(getattr(self.session, name))
 
+    def op_setattr(self, name: str, value: Any) -> None:
+        setattr(self.session, name, value)
+
+    def op_recommend(self, change: dict) -> str:
+        """Apply one recommendation here, where the live objects are.
+
+        `apply_recommendation` reaches `rr.setIntegrator` and
+        `rr.integrator.setValue` - solver objects that cannot cross a pipe -
+        so the whole operation runs in this process rather than being taken
+        apart into remote calls.
+        """
+        from session import apply_recommendation
+        return apply_recommendation(self.session, change)
+
     def op_ids(self, getter: str) -> list[str]:
         return list(getattr(self.session.rr, getter)())
 
@@ -185,8 +199,13 @@ def main() -> int:
             continue
         try:
             reply({"ok": True, "value": handler(**request.get("args", {}))})
-        except BaseException:  # noqa: BLE001 - a bad call must not kill us
-            reply({"ok": False, "error": traceback.format_exc()})
+        except BaseException as exc:  # noqa: BLE001 - must not kill us
+            # A one-line summary for the caller to show a person, and the
+            # traceback alongside it for whoever is debugging. A UI toast
+            # carrying forty lines of stack helps nobody.
+            reply({"ok": False,
+                   "error": f"{type(exc).__name__}: {exc}",
+                   "traceback": traceback.format_exc()})
     return 0
 
 
