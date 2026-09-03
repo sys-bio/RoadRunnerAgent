@@ -141,45 +141,71 @@ viewers).
 
 ## Where we are
 
-Deploying `streamlit_app.py` to Streamlit Community Cloud
-(`sys-bio/RoadRunnerAgent`, public, main file `streamlit_app.py`).
+`streamlit_app.py` - a probe, not the app - is deployed to Streamlit
+Community Cloud from `sys-bio/RoadRunnerAgent`, branch `main`. **The whole
+simulation stack now runs green there.** Nothing about hosting the
+simulation blocks progress; what remains is security and the UI.
 
-- **Install works.** 51 packages, `libroadrunner 2.10.0`, `antimony 3.1.3`,
-  Python 3.11.16, no memory trouble. `requirements.txt` deliberately omits
-  tellurium (saves ~114 MB of wheels).
-- **The probe now runs green on the host.** `libroadrunner==2.10.0` on
-  `numpy==2.2.6` imports cleanly, and all three behaviours in "Verified
-  facts" below still hold on 2.10.0 - they were only ever checked against
-  the local 2.9.1. The hosted simulation stack is therefore viable.
-- The startup segfault is resolved by the numpy pin. The 1.x/2.x ABI theory
-  was **wrong** and should not be retried: libroadrunner 2.10.0 declares
-  `numpy~=2.2`, so `numpy<2` cannot even resolve - it fails the install.
-  Check a package's `requires_dist` before pinning around it:
+### What the host installs
+
+94 packages, Python 3.11, `libroadrunner 2.10.0`, `antimony 3.1.3`,
+`numpy 2.2.6`, tellurium 2.2.13.1. The three behaviours in "Verified facts"
+below were only ever checked against the local 2.9.1; the probe confirms
+they still hold on 2.10.0.
+
+- **numpy must be pinned to `2.2.6`.** The first deploy segfaulted at
+  startup with no traceback. The 1.x/2.x ABI theory was **wrong** and
+  should not be retried: libroadrunner 2.10.0 declares `numpy~=2.2`, so
+  `numpy<2` cannot resolve at all - it fails the install outright.
+- **tellurium is required**, despite the ~114 MB. `session.py` calls
+  `te.loada` in five places, `agent.py` puts `te` in the agent namespace
+  and imports matplotlib, and `prompts.py` promises the agent `te` is
+  there. The tellurium-free build died at import - a fault the probe never
+  caught, because it never imported `session`. No conflict: tellurium asks
+  only for `numpy>=1.23` and `libroadrunner>=2.8`. Its heaviest dependency,
+  rrplugins, is Windows-only by marker and never installs on the host.
+
+### Operating the deployment
+
+- **The app is in the `sys-bio` workspace, not a personal one.**
+  share.streamlit.io shows an empty dashboard and offers to create an app
+  if you are in the wrong one - use the switcher, top right. Sign-in
+  identity matters too: GitHub, Google and email logins are separate
+  accounts even with one address.
+- **Reboot after a `requirements.txt` change** (**⋮ -> Reboot app**);
+  auto-rebuild on push is not prompt. **Manage app** opens the build log.
+- Anything deployed here is public under the lab's name.
+
+### Check a requirements change before pushing
+
+Resolve against the host's platform rather than learning from a failed
+deploy. Pass the older manylinux tags too - a `manylinux2014` wheel runs
+fine on Debian, but `--platform manylinux_2_28_x86_64` alone will not match
+it and invents conflicts that do not exist:
+
+```bash
+.venv/Scripts/python.exe -m pip install --dry-run --ignore-installed \
+  --report rep.json --python-version 3.11 --only-binary=:all: \
+  --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
+  --platform manylinux_2_17_x86_64 --platform any \
+  --target ./pipdry -r requirements.txt
+```
+
+And read what a package actually demands before pinning around it:
 
 ```bash
 python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://pypi.org/pypi/libroadrunner/2.10.0/json'))['info']['requires_dist'])"
 ```
 
-**One blocker remains before the agent itself can be hosted.**
+### What blocks hosting the agent
 
-`run_python` is still an unsandboxed `exec` in the host process. See
-"Security" above; this is the real gate, and it is unchanged.
-
-A second blocker was closed by shipping tellurium in `requirements.txt`
-after all. `session.py` calls `te.loada` in five places, `agent.py` puts
-`te` in the agent namespace and imports matplotlib, and `prompts.py`
-promises the agent `te` is there - so the tellurium-free build died at
-import, a fault the probe never saw because it never imported `session`.
-Resolving for the host (Linux, py3.11) gives 94 packages with the
-`numpy==2.2.6` and `libroadrunner==2.10.0` pins intact; tellurium asks only
-for `numpy>=1.23` and `libroadrunner>=2.8`, and its heaviest Windows-only
-dependency, rrplugins, never installs there.
-
-**Check a requirements change against the host's platform before pushing**,
-rather than learning from a failed deploy. Pass the older manylinux tags
-too - a `manylinux2014` wheel runs fine on Debian, but `--platform
-manylinux_2_28_x86_64` alone will not match it and invents conflicts:
-
-```bash
-.venv/Scripts/python.exe -m pip install --dry-run --ignore-installed   --report rep.json --python-version 3.11 --only-binary=:all:   --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64   --platform manylinux_2_17_x86_64 --platform any   --target /tmp/pipdry -r requirements.txt
-```
+1. **`run_python` is an unsandboxed `exec` in the host process.** See
+   "Security" above. This is the real gate and it is unchanged. Community
+   Cloud runs one container for all viewers, so it cannot give the
+   per-session isolation this needs.
+2. **There is no Streamlit UI for the agent.** `app.py` is NiceGUI
+   (1,057 lines); `streamlit_app.py` is only the probe. Hosting on
+   Community Cloud means porting the UI; hosting somewhere that runs a
+   long-lived ASGI process (Fly, Render, Cloud Run) means `app.py` runs
+   as-is *and* per-session containers become possible, which is the only
+   real answer to (1).
