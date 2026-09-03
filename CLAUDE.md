@@ -148,16 +148,25 @@ Deploying `streamlit_app.py` to Streamlit Community Cloud
   Python 3.11.16, no memory trouble. `requirements.txt` deliberately omits
   tellurium (saves ~114 MB of wheels).
 - **The app then segfaulted at startup** - native crash, no traceback.
-  Prime suspect: the host installed **numpy 2.4.6**, while a tellurium-based
-  resolution pins numpy **1.26.4**. A C extension built against the numpy 1.x
-  ABI segfaults under 2.x.
 - `streamlit_app.py` has been rewritten to run every import and every
   RoadRunner call in a **subprocess**, so a segfault reports as
-  `SIGSEGV` against a named step instead of killing the page.
+  `SIGSEGV` against a named step instead of killing the page. **This
+  rewrite has never actually been deployed**, so nothing is yet known
+  about *which* step dies.
+- **The numpy 1.x/2.x ABI theory is dead.** libroadrunner 2.10.0 declares
+  `numpy~=2.2`, so it is built *for* numpy 2 and `numpy<2` does not resolve
+  at all - it failed the install outright. The host's numpy 2.4.6 was a
+  legal choice, not an obvious fault. `requirements.txt` now pins
+  `numpy==2.2.6`, matching both the wheel's series and the development
+  machine, which runs roadrunner 2.9.1 on 2.2.6 happily.
 
-**Next action:** push `streamlit_app.py`, redeploy, read which subprocess
-crashes. If `import roadrunner` is the one, add `numpy<2` to
-`requirements.txt` and redeploy.
+**Next action:** redeploy and read the probe page. If `import roadrunner`
+still segfaults on numpy 2.2.6, numpy is exonerated and the next suspect is
+the `libroadrunner` 2.10.0 manylinux_2_28 wheel itself - fall back to 2.9.1,
+the version every documented behaviour here was verified against.
 
-Note the local machine runs numpy 2.2.6 with roadrunner **2.9.1** happily, so
-if this is an ABI mismatch it is specific to the 2.10.0 Linux build.
+Check a package's declared dependencies before pinning around it:
+
+```bash
+python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://pypi.org/pypi/libroadrunner/2.10.0/json'))['info']['requires_dist'])"
+```
