@@ -53,6 +53,7 @@ import streamlit as st
 import agent as agent_config
 import cases
 import providers
+from gate import password_gate
 from remote import WorkerSession
 from session import Session, apply_recommendation, coerce
 
@@ -209,36 +210,6 @@ def init_state() -> None:
         st.session_state.setdefault(name, value)
 
 
-# ------------------------------------------------------------------- gate
-
-def password_gate() -> bool:
-    """A shared password, when one is configured.
-
-    Absent `APP_PASSWORD` in secrets the app is open - which is a reasonable
-    default locally and a bad one hosted, so say so rather than silently
-    allowing it.
-    """
-    try:
-        expected = st.secrets.get("APP_PASSWORD", "")
-    except Exception:      # no secrets.toml at all
-        expected = ""
-    if not expected:
-        return True
-    if st.session_state.get("authorised"):
-        return True
-
-    st.title("RoadRunner Agent")
-    st.caption("This deployment is password protected.")
-    entered = st.text_input("Password", type="password")
-    if entered:
-        if entered == expected:
-            st.session_state.authorised = True
-            st.rerun()
-        else:
-            st.error("Not that one.")
-    return False
-
-
 # -------------------------------------------------------------- simulate
 
 def do_load(session, announce: bool = True) -> bool:
@@ -265,6 +236,11 @@ def do_load(session, announce: bool = True) -> bool:
 def do_simulate(session) -> None:
     if not session.loaded:
         return
+    # Defended twice: the widget cannot offer fewer than two points, but
+    # session state is also written by `queue()` and by a restored session,
+    # and the solver's own complaint names the solver rather than the field.
+    if int(st.session_state.points or 0) < 2:
+        st.session_state.points = 2
     selections = ["time"] + list(st.session_state.selected or [])
     try:
         session.simulate(float(st.session_state.start),
@@ -461,9 +437,16 @@ def values_panel(session) -> None:
 def simulation_panel(session) -> None:
     st.markdown("##### Simulation")
     columns = st.columns(3)
-    columns[0].number_input("start", key="start", format="%g")
-    columns[1].number_input("end", key="end", format="%g")
-    columns[2].number_input("points", key="points", step=100)
+    # No `format` string: "%g" renders correctly on the version developed
+    # against and there is no reason to bet the page on every other version
+    # agreeing. Explicit bounds and steps instead, which every version reads
+    # the same way.
+    columns[0].number_input("start", key="start", step=1.0)
+    columns[1].number_input("end", key="end", min_value=0.0, step=10.0)
+    # A solver given fewer than two points raises, and the message that comes
+    # back names the solver rather than the box that caused it. Make the bad
+    # value unreachable instead.
+    columns[2].number_input("points", key="points", min_value=2, step=100)
     if session.loaded:
         st.multiselect("species", list(session.rr.getFloatingSpeciesIds()),
                        key="selected")
@@ -840,10 +823,18 @@ def sidebar() -> dict:
 
 
 def main() -> None:
-    init_state()
-    apply_pending()
+    # The gate comes first, before any state is seeded. Seeding on the gate
+    # run sets `start`, `end` and `points` as plain values *before* their
+    # widgets have ever been built, and Streamlit discards state for widgets
+    # that a run did not render - so the defaults were thrown away and the
+    # boxes came up empty on the first authorised run, with the point count
+    # low enough that the solver complained. Gating first makes the
+    # password-protected path identical to the open one, which is the path
+    # every test covers.
     if not password_gate():
         return
+    init_state()
+    apply_pending()
     session = get_session()
     settings = sidebar()
 

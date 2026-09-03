@@ -27,8 +27,17 @@ import textwrap
 
 import streamlit as st
 
+from gate import password_gate
+
 st.set_page_config(page_title="RoadRunner stack probe", page_icon="🧪",
                    layout="centered")
+# Pages are independently reachable, by URL and from the sidebar, so this
+# page needs the gate in its own right - the main script's call does not
+# cover it. It runs no agent, but it reports the host environment and
+# spawns subprocesses, which is not for strangers.
+if not password_gate("RoadRunner stack probe"):
+    st.stop()
+
 st.title("RoadRunner stack probe")
 st.caption("Where does the simulation stack break on this host?")
 

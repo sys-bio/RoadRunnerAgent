@@ -20,10 +20,15 @@
 # silently change the semantics session.py depends on. The deployed probe
 # confirms the three behaviours in CLAUDE.md still hold on 2.10.0.
 
+# streamlit is pinned for the same reason libroadrunner is: a floating
+# version lets the host silently change widget semantics under a page that
+# was developed and tested against a known one. 1.63.0 is what
+# test_streamlit_app.py runs against.
+
 libroadrunner==2.10.0
 antimony
 numpy==2.2.6
-streamlit
+streamlit==1.63.0
 plotly
 anthropic
 openai
