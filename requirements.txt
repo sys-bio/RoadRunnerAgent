@@ -1,0 +1,23 @@
+# Dependencies for the hosted (Streamlit) build.
+#
+# Deliberately WITHOUT tellurium. The only thing this project uses from it is
+# `te.loada`, which is antimony -> SBML -> RoadRunner in a few lines, while
+# tellurium drags in rrplugins (27 MB), scipy (35 MB), pandas, phrasedml and
+# python-libsbml. Measured on the Linux wheel set: 283 MB with tellurium,
+# 169 MB without.
+#
+# libroadrunner resolves by glibc target: manylinux2014 gets 2.7.0, while
+# manylinux_2_28 (any current Debian, which is what Streamlit Cloud runs)
+# gets 2.10.0. The local development machine has 2.9.1, so the hosted build
+# runs a NEWER RoadRunner than the one this project's documented behaviours
+# were verified against - which is what streamlit_app.py checks. 2.10.0 is
+# pinned rather than floated, so a hosted deployment cannot silently change
+# the semantics the session logic depends on.
+
+libroadrunner==2.10.0
+antimony
+numpy
+streamlit
+plotly
+anthropic
+openai

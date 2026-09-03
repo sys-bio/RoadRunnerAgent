@@ -1,0 +1,69 @@
+{
+  "case": "stiff_robertson",
+  "repeat": 1,
+  "expected_classification": "numerical",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 4,
+  "seconds": 18.7,
+  "input_tokens": 25407,
+  "output_tokens": 1213,
+  "cost_usd": 0.0295,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "numerical",
+    "finding": "This is Robertson's stiff test problem (k1=0.04, k2=3e7, k3=1e4 spans many orders of magnitude in rate). The model and parameters are correct - this is a genuinely stiff ODE system. CVODE was running in non-stiff (Adams/functional-iteration) mode, i.e. `integrator.stiff = False`, so it needs an enormous number of tiny internal steps to stay stable as the fast B/C dynamics kick in, and eventually exhausts `maximum_num_steps`. Raising `maximum_num_steps` just postpones the failure to a later simulation time rather than fixing the underlying issue, exactly as the user observed. Switching to the BDF/stiff mode (`integrator.stiff = True`) makes CVODE use an implicit stiff-appropriate method and the same simulation (even out to t=4e5) completes with no step-count problems.",
+    "evidence": "With `rr.integrator.stiff` at its default `False`, `rr.simulate(0, 4e5, 200)` raises `CV_TOO_MUCH_WORK` with mxstep=20000, matching the user's error. Setting `rr.integrator.setValue('stiff', True)` and rerunning the identical call (`rr.simulate(0, 4e5, 200)`) completes successfully, ending near A\u22480.0049, B\u22482e-8, C\u22480.995 (correct qualitative Robertson behaviour: A and B decay, C saturates near 1).",
+    "changes": [
+      {
+        "selector": "integrator.stiff",
+        "what": "Enabled CVODE's stiff (BDF/implicit) integration mode instead of the default non-stiff Adams mode",
+        "before": "false",
+        "after": "true"
+      }
+    ],
+    "session_state": "fix applied",
+    "recommended_changes": []
+  },
+  "change_log": [
+    [
+      "integrator stiff",
+      "False",
+      "True"
+    ]
+  ],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nprint(rr.integrator.getValue('stiff'))\ntry:\n    res = rr.simulate(0, 400, 200)\n    print(res[-5:])\nexcept Exception as e:\n    print(\"ERR\", e)\n",
+      "output": "False\n [[ 391.96, 0.453049, 3.25518e-06, 0.546947],\n  [ 393.97, 0.452412, 3.24702e-06, 0.547585],\n  [ 395.98, 0.451778, 3.23892e-06, 0.548219],\n  [ 397.99, 0.451147, 3.23089e-06,  0.54885],\n  [    400, 0.450519,  3.2229e-06, 0.549478]]\n\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.reset()\ntry:\n    res = rr.simulate(0, 4e5, 200)\n    print(\"ok\", res[-3:])\nexcept Exception as e:\n    print(\"ERR\", e)\n",
+      "output": "ERR CVODE Error: CV_TOO_MUCH_WORK: The solver took mxstep (20000) internal steps but could not reach tout.; In ?integrate@CVODEIntegrator@rr@@UEAANNN@Z\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.reset()\nrr.integrator.setValue('stiff', True)\ntry:\n    res = rr.simulate(0, 4e5, 200)\n    print(\"ok\", res[-3:])\nexcept Exception as e:\n    print(\"ERR\", e)\n",
+      "output": "ok  [[ 395980, 0.00498626, 2.00438e-08, 0.995014],\n  [ 397990, 0.00496216, 1.99464e-08, 0.995038],\n  [ 400000, 0.00493828,   1.985e-08, 0.995062]]\n\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "numerical",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "fix applied",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

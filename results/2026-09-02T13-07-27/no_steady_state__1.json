@@ -1,0 +1,59 @@
+{
+  "case": "no_steady_state",
+  "repeat": 1,
+  "expected_classification": "parametric",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 3,
+  "seconds": 27.9,
+  "input_tokens": 23574,
+  "output_tokens": 2110,
+  "cost_usd": 0.0432,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "parametric",
+    "finding": "There is no steady state for this parameter set, so nleq2's failure is the correct answer, not a solver limitation. J2's substrate-inhibition rate law Vm*S1/(Km+S1+S1^2/Ki) has a maximum over S1 of Vm/(1+2*sqrt(Km/Ki)) \u2248 2.61 (at S1\u22480.0707), attained before it falls back toward zero for large S1 (self-inhibition dominates as S1\u2192\u221e). The constant influx vo=4.5 exceeds this maximum possible efflux capacity through J2 for every value of S1, so S1 can never be balanced \u2014 it accumulates without bound, exactly as seen in the user's own 0-200s time course (S1 climbing monotonically past 898 and still rising, never plateauing). Presimulation doesn't help because there is nothing to presimulate into; the trajectory simply keeps growing. The Jacobian singularity nleq2 reports is a real feature: the Newton iterate lands near S1\u22480.0707, exactly the peak of the substrate-inhibition curve, where dFlux/dS1=0, which is unavoidably singular and not a numerically fixable point since it isn't a root in the first place.",
+    "evidence": "Computed max of Vm*S1/(Km+S1+S1^2/Ki) over S1 numerically: max \u22482.612 at S1\u22480.0707, versus vo=4.5. Since vo > max(J2 flux) for all S1, dS1/dt = vo - J2(S1) > 0 everywhere, so S1 diverges. Confirmed against the user's own 200s simulation: [S1] rises monotonically from 0 to 898.8 with no sign of leveling off, while [S2] decays toward ~0 (since J2's flux, and hence input to S2, is falling as S1 grows past the Haldane peak). Running rr.steadyState() after reset reproduces the reported error, and the Newton solver's internal state settles near [S1,S2]=[0.0707, 2.612] - exactly the peak of the substrate-inhibition curve, i.e. the one point where the Jacobian of J2 w.r.t. S1 is truly zero, before diverging further since no root exists past there.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "value",
+        "selector": "vo",
+        "value": "<2.6",
+        "model_text": "",
+        "why": "vo must be reduced below the maximum achievable J2 flux (\u22482.612 given current Km, Ki, Vm) for a steady state to exist at all; alternatively increase Vm or Ki (reduce substrate inhibition strength) so the flux ceiling exceeds vo=4.5. No solver or tolerance change can produce a steady state that does not exist."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nimport numpy as np\nVm=10;Km=0.1;Ki=0.05\ns=np.linspace(0,10,100000)\nflux=Vm*s/(Km+s+s**2/Ki)\nprint(flux.max(), s[np.argmax(flux)])\n",
+      "output": "2.6120387304484023 0.07070070700707007\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.reset()\nrr.integrator.setValue('stiff', True)\ntry:\n    ss=rr.steadyState()\n    print(ss)\nexcept Exception as e:\n    print(e)\nprint(rr.getFloatingSpeciesConcentrations())\n",
+      "output": "Jacobian matrix singular in NLEQ. Failed to converge to steady state. Check if Jacobian matrix is non-invertible or steady state solution does not exist.\n[0.07071067 2.61203875]\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "parametric",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

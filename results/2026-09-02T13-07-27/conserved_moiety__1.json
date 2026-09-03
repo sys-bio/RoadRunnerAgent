@@ -1,0 +1,40 @@
+{
+  "case": "conserved_moiety",
+  "repeat": 1,
+  "expected_classification": "expected",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 1,
+  "seconds": 22.8,
+  "input_tokens": 7094,
+  "output_tokens": 970,
+  "cost_usd": 0.0262,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "expected",
+    "finding": "S1 and S2 only interconvert (J1: S1->S2, J2: S2->S1); there is no sink reaction removing mass from the system, so S1+S2=10 is conserved for all time. The system relaxes to the equilibrium of the reversible reaction, where k1*S1 = k2*S2, i.e. S2/S1 = k1/k2 = 0.6/0.15 = 4. With total=10 that gives S1=2, S2=8, which is exactly the plateau seen. Increasing k1 shifts this equilibrium ratio (a new plateau) but can never drive S1 to zero because nothing depletes the total pool - S1 going to zero would require k2*S2 (the back reaction) to vanish too, which only happens as k1/k2 -> infinity in the limit. The model is doing exactly what its reactions specify; there's no consumption step written, only conversion.",
+    "evidence": "Simulated to t=60 (rr.reset() then rr.simulate(0,60,300)) reproduced the handed-off trace: S1 -> 2.0, S2 -> 8.0. S1+S2=10 at every sampled time point (conservation). At steady state k1*S1=0.6*2=1.2 equals k2*S2=0.15*8=1.2, confirming this is the equilibrium of the reversible conversion, not a numerical artifact. There is no sink/degradation reaction for either species in the model.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": []
+  },
+  "change_log": [],
+  "transcript": [],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "expected",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

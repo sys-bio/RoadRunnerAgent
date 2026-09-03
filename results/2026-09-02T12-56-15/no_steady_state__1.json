@@ -1,0 +1,65 @@
+{
+  "case": "no_steady_state",
+  "repeat": 1,
+  "expected_classification": "parametric",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 4,
+  "seconds": 30.0,
+  "input_tokens": 30847,
+  "output_tokens": 2125,
+  "cost_usd": 0.0522,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "parametric",
+    "finding": "nleq2 is not failing to converge because of numerics \u2014 there is no steady state to find. J2's rate law Vm*S1/(Km+S1+S1^2/Ki) is a substrate-inhibition form that is bounded: it rises to a maximum and then falls back toward zero as S1 grows, because the S1^2/Ki term in the denominator eventually dominates. With Vm=10, Km=0.1, Ki=0.05 the maximum possible flux through J2 is only \u22482.61 (attained at S1\u22480.071), but S1 is being produced at the constant rate vo=4.5. Production permanently exceeds the maximum possible consumption rate, so S1 has no fixed point and grows without bound for all time. The time course you already ran shows exactly this: S1 is still climbing linearly-ish (898.8 at t=200 and rising, [S2] meanwhile collapsing toward 0 because the near-zero flux into J2 can't feed it). Switching solvers, enabling presimulation, or loosening tolerances won't help since the Jacobian truly is singular at what would be the fixed point \u2014 there isn't one.",
+    "evidence": "Numerically maximizing Vm*S1/(Km+S1+S1^2/Ki) over S1 gives a peak of \u22482.612 at S1\u22480.0707, well below vo=4.5. Re-running rr.steadyState() after rr.reset() reproduces the reported singular-Jacobian error; enabling allow_presimulation gives a related failure ('Damping factor has become too small to continue') rather than resolving it, since presimulation just runs S1 further out along its unbounded trajectory. The user's own 0\u2013200s time course shows S1 monotonically increasing (0 \u2192 898.8) with no sign of leveling, consistent with unbounded growth rather than slow convergence.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "value",
+        "selector": "vo",
+        "value": 2.0,
+        "model_text": "",
+        "end_time": 0,
+        "why": "vo must be below the maximum attainable flux through J2 (~2.61 with current Vm, Km, Ki) for a steady state to exist. Lowering vo (or raising Vm / adjusting Km, Ki so the J2 peak rate exceeds vo) restores a genuine fixed point. This is a suggestion to consider, not something I've applied \u2014 the choice of vo vs. Vm/Km/Ki depends on which the modeller actually intends to be fixed for this system."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nimport numpy as np\nVm,Km,Ki=10,0.1,0.05\nS1=np.linspace(0,5,100000)\nrate=Vm*S1/(Km+S1+S1**2/Ki)\nprint(rate.max(), S1[rate.argmax()])\n",
+      "output": "2.6120387304484023 0.07070070700707007\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.reset()\nrr.integrator.setValue('stiff', True)\ntry:\n    rr.steadyState()\nexcept Exception as e:\n    print(e)\nrr.steadyStateSolver.setValue('allow_presimulation', True)\ntry:\n    rr.steadyState()\nexcept Exception as e:\n    print(e)\n",
+      "output": "Jacobian matrix singular in NLEQ. Failed to converge to steady state. Check if Jacobian matrix is non-invertible or steady state solution does not exist.\nSteadyStateSolver failed to solve presimulation program: Damping factor has became to small to continue\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.steadyStateSolver.setValue('allow_presimulation', False)\n",
+      "output": "(no output)",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "parametric",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

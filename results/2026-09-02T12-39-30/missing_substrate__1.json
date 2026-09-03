@@ -1,0 +1,52 @@
+{
+  "case": "missing_substrate",
+  "repeat": 1,
+  "expected_classification": "structural",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 2,
+  "seconds": 12.6,
+  "input_tokens": 13289,
+  "output_tokens": 965,
+  "cost_usd": 0.0232,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "structural",
+    "finding": "B going negative is not a tolerance/solver artifact \u2014 it's a direct, correct consequence of the rate law written for J3. J3 consumes A and B 1:1 (`A + B -> C`), but its rate expression is `k1*A`, with no dependence on B at all. Once B is consumed to zero the reaction keeps running at the same rate (set entirely by A, which is being replenished by J1), so B is driven arbitrarily negative \u2014 there is nothing in the kinetics to slow or stop consumption when B runs out. Mass-action for a bimolecular reaction should be `k1*A*B` (or some other rate that vanishes as B\u21920); as written the model has no floor on B. Stoichiometry is fine, as the user found; the bug is in the rate law, not the stoichiometry.",
+    "evidence": "Reproduced the user's run exactly (`rr.reset(); rr.simulate(0,50,500,...)`): B reaches -38 at t=50, matching their output. Checked integrator settings (rtol 1e-6, atol 1e-12, cvode/stiff on) \u2014 tight enough that this isn't truncation error; the trajectory is smooth and monotonic, consistent with the ODE genuinely having B(t)<0 as its correct solution given `d[B]/dt = v1 - k1*A`, which has no B-dependence and stays negative once A saturates near 2 (since v1=0.2 < k1*A\u22481). This confirms it's the rate law, not the solver.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "selector": "J3",
+        "value": 0,
+        "why": "Not a numeric selector fix \u2014 the rate law for J3 needs editing in the Antimony source from `k1*A` to `k1*A*B` (or another law that depends on B) so that consumption of B vanishes as B\u21920, preventing it going negative."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nres = rr.simulate(0,50,500,['time','[A]','[B]','[C]'])\nprint(res[-5:])\n",
+      "output": " [[ 49.5992, 2, -37.6794, 48.5992],\n  [ 49.6994, 2, -37.7595, 48.6994],\n  [ 49.7996, 2, -37.8397, 48.7996],\n  [ 49.8998, 2, -37.9198, 48.8998],\n  [      50, 2,      -38,      49]]\n\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "structural",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

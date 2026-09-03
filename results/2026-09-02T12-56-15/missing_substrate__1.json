@@ -1,0 +1,55 @@
+{
+  "case": "missing_substrate",
+  "repeat": 1,
+  "expected_classification": "structural",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 2,
+  "seconds": 14.8,
+  "input_tokens": 14533,
+  "output_tokens": 1096,
+  "cost_usd": 0.0246,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "structural",
+    "finding": "The stoichiometry of J3 is fine (A + B -> C, consuming one A and one B per event), but the *rate law* is wrong: `k1*A` has no dependence on B at all. So J3 keeps consuming B at a rate proportional only to A, even once B is exhausted or would go negative \u2014 nothing in the rate law protects B from being driven below zero. Since v1 (synthesis of B) is only 0.2 and J3's rate (k1*A \u2248 0.5*2 \u2248 1) vastly exceeds B's production rate, B is consumed far faster than it's replenished and the ODE integrator (correctly) integrates the model as written straight through zero into negative territory. This is a mass-action rate law missing the B concentration, not a solver tolerance problem.",
+    "evidence": "Re-running the user's exact simulation (rr.reset(); rr.simulate(0,50,500,...)) reproduces exactly what they saw: B goes from 1.0 down through zero to about -38 by t=50, while A and C keep climbing linearly. J3's rate `k1*A` never appears with a factor of B, so nothing in the kinetics prevents B from being consumed after it hits zero \u2014 the ODE simply keeps integrating dB/dt = v1 - k1*A \u2248 0.2 - 1.0 < 0 regardless of B's sign. Tightening tolerances would not change this: it's the equations themselves that allow unbounded consumption of B.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "model_text",
+        "selector": "",
+        "value": 0,
+        "model_text": "// A and B combine to make C\nJ1: -> A;        v0;\nJ2: -> B;        v1;\nJ3: A + B -> C;  k1*A*B;\n\nv0 = 1;\nv1 = 0.2;\nk1 = 0.5;\n\nA = 1;\nB = 1;\nC = 0;\n",
+        "end_time": 0,
+        "why": "J3's rate law should include the B concentration for a bimolecular A+B->C reaction; with the correct mass-action rate k1*A*B, the reaction rate naturally goes to zero as B->0, so B stays non-negative."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nres = rr.simulate(0,50,500,['time','A','B','C'])\nprint(res[-1])\n",
+      "output": "[ 50.           2.00000118 -37.99999882  48.99999882]\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "structural",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

@@ -1,0 +1,55 @@
+{
+  "case": "run_too_short",
+  "repeat": 1,
+  "expected_classification": "expected",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 2,
+  "seconds": 13.5,
+  "input_tokens": 12794,
+  "output_tokens": 910,
+  "cost_usd": 0.0193,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "expected",
+    "finding": "The model is correct and the integrator is fine. This is a linear ODE dS1/dt = vo - k1*S1 with time constant 1/k1 = 50. Approach to steady state (analytically S1(t) = (vo/k1)(1-exp(-k1 t)), steady state = vo/k1 = 50) requires several hundred time units to visibly flatten. The user simulated only to t=10, i.e. 0.2 time constants, where S1 is still at ~18% of its final value and necessarily looks like it's \"still climbing\" - because it is, just slowly. Tightening tolerances does nothing because there's no numerical error; the trajectory is smooth and well resolved even at loose tolerance.",
+    "evidence": "Re-simulating the unmodified model from t=0 to t=300 gives S1(300)=49.876, converging cleanly to the analytic steady state vo/k1 = 1/0.02 = 50. The original run to t=10 only reaches S1=9.06, consistent with (vo/k1)(1-exp(-0.02*10))=9.06. No tolerance or solver change affects this - the dynamics are just slow (time constant 50 time units).",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "simulation",
+        "selector": "end_time",
+        "value": 300,
+        "model_text": "",
+        "end_time": 300,
+        "why": "The system's relaxation time is 1/k1=50; simulating only to t=10 shows less than one-fifth of a time constant, so it appears to be climbing indefinitely. Extending the run to ~300 time units (6 time constants) shows clear convergence to the steady state S1=vo/k1=50."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nres = rr.simulate(0, 300, 300, ['time','[S1]'])\nprint(res[-1], res[0])\n",
+      "output": "[300.          49.87599863] [0. 0.]\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "expected",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

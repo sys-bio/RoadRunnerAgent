@@ -1,0 +1,54 @@
+{
+  "case": "missing_substrate",
+  "repeat": 1,
+  "expected_classification": "structural",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 2,
+  "seconds": 14.5,
+  "input_tokens": 15471,
+  "output_tokens": 973,
+  "cost_usd": 0.024,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "structural",
+    "finding": "This is not a solver problem. The rate law for J3 is `k1*A` \u2014 it depends only on A, not on B, even though B is consumed stoichiometrically (A + B -> C). So the reaction proceeds at a rate set purely by A's concentration regardless of how much B is left, and once B hits zero the reaction keeps running and drives B negative. The stoichiometry (1 A + 1 B -> 1 C) is fine, as the user checked; the bug is the missing B factor in the kinetic law, which should be mass-action k1*A*B for this bimolecular reaction.",
+    "evidence": "Reset and re-ran the user's exact simulation (0-50, 500 points): B goes negative almost immediately and reaches -38 by t=50, matching the reported output exactly. Integrator settings (cvode, rtol 1e-6, atol 1e-12, fixed step) are tight; tightening further would not stop B going negative because the ODE itself has dB/dt = v1 - k1*A, which is negative and unbounded once B\u21920 \u2014 there's no B-dependence in the consumption term to shut the reaction off.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "model_text",
+        "selector": "",
+        "value": "",
+        "model_text": "// A and B combine to make C\nJ1: -> A;        v0;\nJ2: -> B;        v1;\nJ3: A + B -> C;  k1*A*B;\n\nv0 = 1;\nv1 = 0.2;\nk1 = 0.5;\n\nA = 1;\nB = 1;\nC = 0;\n",
+        "why": "J3's rate law omits the B dependence, so the reaction keeps consuming B at a rate independent of B's own concentration, driving it negative once it is depleted. Making it mass-action (k1*A*B) ties the consumption rate to B's availability and keeps B non-negative."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nres = rr.simulate(0,50,500,['time','[A]','[B]','[C]'])\nprint(res[:5], res[-5:])\n",
+      "output": " [[        0,       1,        1,         0],\n  [   0.1002, 1.04887, 0.968706, 0.0513346],\n  [ 0.200401, 1.09534, 0.935023,  0.105057],\n  [ 0.300601, 1.13955,  0.89907,  0.161051],\n  [ 0.400802,  1.1816, 0.860956,  0.219204]]\n  [[ 49.5992, 2, -37.6794, 48.5992],\n  [ 49.6994, 2, -37.7595, 48.6994],\n  [ 49.7996, 2, -37.8397, 48.7996],\n  [ 49.8998, 2, -37.9198, 48.8998],\n  [      50, 2,      -38,      49]]\n\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "structural",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

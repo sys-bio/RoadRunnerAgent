@@ -1,0 +1,57 @@
+{
+  "case": "conserved_moiety",
+  "repeat": 1,
+  "expected_classification": "expected",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 3,
+  "seconds": 15.6,
+  "input_tokens": 18849,
+  "output_tokens": 1042,
+  "cost_usd": 0.0369,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "expected",
+    "finding": "S1 and S2 only interconvert (J1: S1->S2, J2: S2->S1); there is no reaction that removes mass from the system, so S1+S2 is a conserved moiety (=10). The system is simply relaxing to the equilibrium of this reversible interconversion, not decaying to zero. At equilibrium k1*S1=k2*S2, so S1_eq = Total*k2/(k1+k2) = 10*0.15/0.75 = 2.0, exactly what is observed. Raising k1 just shifts the equilibrium ratio (a smaller S1_eq), it will never reach zero because that requires k2=0 or an added degradation/removal reaction for S1 (or S2). The model is correct; the user's expectation that S1 should be 'consumed' to zero is not consistent with the reaction network they wrote.",
+    "evidence": "Simulated 0-60s with tighter/variable-step integration, final state [S1]=1.99999976, [S2]=8.00000024, matching the analytic equilibrium prediction 10*k2/(k1+k2)=10*0.15/0.75=2.0 exactly. Total mass S1+S2=10 conserved throughout (matches initial S1=10,S2=0). No sink/source reactions exist in the model, only the two interconversion reactions J1 and J2.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "selector": "k2",
+        "value": 0.0,
+        "why": "If S1 is truly meant to be irreversibly consumed to zero, remove or zero out the reverse reaction rate k2 (or add an explicit degradation reaction for S2) so mass is not conserved between S1 and S2."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nrr.integrator.setValue('variable_step_size', True)\nres=rr.simulate(0,60,300,['time','[S1]','[S2]'])\nprint(res[-1])\nprint(10*0.15/0.75)\n",
+      "output": "[60.          1.99999976  8.00000024]\n2.0\n",
+      "is_error": false
+    },
+    {
+      "code": "\nrr.integrator.setValue('variable_step_size', False)\n",
+      "output": "(no output)",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "expected",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}

@@ -1,0 +1,54 @@
+{
+  "case": "run_too_short",
+  "repeat": 1,
+  "expected_classification": "expected",
+  "model": "claude-sonnet-5",
+  "effort": "low",
+  "turns": 2,
+  "seconds": 12.2,
+  "input_tokens": 13521,
+  "output_tokens": 876,
+  "cost_usd": 0.0191,
+  "stopped_because": "completed",
+  "report": {
+    "classification": "expected",
+    "finding": "The model is fine and the integrator is fine. The ODE is dS1/dt = vo - k1*S1, a simple linear relaxation with time constant 1/k1 = 50 time units and steady state S1* = vo/k1 = 50. The user only simulated to t=10, i.e. 0.2 time constants, so S1 is still on the early, nearly-linear part of the exponential approach and naturally looks like it's \"still climbing with no sign of levelling off.\" Tightening tolerances does nothing because there's no numerical error to fix - the trajectory is already accurate, it just hasn't gotten anywhere near equilibrium yet.",
+    "evidence": "Analytic steady state: vo/k1 = 1/0.02 = 50, approach time constant 1/k1 = 50. Simulating rr.reset(); rr.simulate(0,300,300) gives S1(150)=47.5, S1(300)=49.9, consistent with exponential approach to 50 with tau=50. The original run only covered t=0..10 (0.2 tau), reaching S1=9.06, matching S1(t)=50*(1-exp(-0.02*10))=9.06 exactly - the solver is tracking the correct solution, the run is just far too short.",
+    "changes": [],
+    "session_state": "restored",
+    "recommended_changes": [
+      {
+        "kind": "simulation",
+        "selector": "end_time",
+        "value": "300",
+        "model_text": "",
+        "why": "With time constant 1/k1=50, the system needs several hundred time units to visibly approach its steady state of vo/k1=50; t=10 only reaches 18% of the way there."
+      }
+    ]
+  },
+  "change_log": [],
+  "transcript": [
+    {
+      "code": "\nrr.reset()\nres = rr.simulate(0,300,300, selections=['time','S1'])\nprint(res[-1], res[len(res)//2])\n",
+      "output": "[300.          49.87599863] [150.50167224  47.53531001]\n",
+      "is_error": false
+    }
+  ],
+  "checks": {
+    "produced_a_report": true,
+    "classification": "expected",
+    "classification_correct": true,
+    "changes_fully_reported": true,
+    "no_phantom_changes": true,
+    "unreported_changes": [],
+    "phantom_changes": [],
+    "session_state": "restored",
+    "session_state_honest": true,
+    "actionable": true
+  },
+  "escalation_ladder": [
+    "claude-sonnet-5:low"
+  ],
+  "attempt": 1,
+  "escalated": false
+}
