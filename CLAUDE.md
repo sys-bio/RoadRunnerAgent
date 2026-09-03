@@ -147,26 +147,27 @@ Deploying `streamlit_app.py` to Streamlit Community Cloud
 - **Install works.** 51 packages, `libroadrunner 2.10.0`, `antimony 3.1.3`,
   Python 3.11.16, no memory trouble. `requirements.txt` deliberately omits
   tellurium (saves ~114 MB of wheels).
-- **The app then segfaulted at startup** - native crash, no traceback.
-- `streamlit_app.py` has been rewritten to run every import and every
-  RoadRunner call in a **subprocess**, so a segfault reports as
-  `SIGSEGV` against a named step instead of killing the page. **This
-  rewrite has never actually been deployed**, so nothing is yet known
-  about *which* step dies.
-- **The numpy 1.x/2.x ABI theory is dead.** libroadrunner 2.10.0 declares
-  `numpy~=2.2`, so it is built *for* numpy 2 and `numpy<2` does not resolve
-  at all - it failed the install outright. The host's numpy 2.4.6 was a
-  legal choice, not an obvious fault. `requirements.txt` now pins
-  `numpy==2.2.6`, matching both the wheel's series and the development
-  machine, which runs roadrunner 2.9.1 on 2.2.6 happily.
-
-**Next action:** redeploy and read the probe page. If `import roadrunner`
-still segfaults on numpy 2.2.6, numpy is exonerated and the next suspect is
-the `libroadrunner` 2.10.0 manylinux_2_28 wheel itself - fall back to 2.9.1,
-the version every documented behaviour here was verified against.
-
-Check a package's declared dependencies before pinning around it:
+- **The probe now runs green on the host.** `libroadrunner==2.10.0` on
+  `numpy==2.2.6` imports cleanly, and all three behaviours in "Verified
+  facts" below still hold on 2.10.0 - they were only ever checked against
+  the local 2.9.1. The hosted simulation stack is therefore viable.
+- The startup segfault is resolved by the numpy pin. The 1.x/2.x ABI theory
+  was **wrong** and should not be retried: libroadrunner 2.10.0 declares
+  `numpy~=2.2`, so `numpy<2` cannot even resolve - it fails the install.
+  Check a package's `requires_dist` before pinning around it:
 
 ```bash
 python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://pypi.org/pypi/libroadrunner/2.10.0/json'))['info']['requires_dist'])"
 ```
+
+**Two blockers remain before the agent itself can be hosted.**
+
+1. **`session.py` hard-imports tellurium, which `requirements.txt` omits on
+   purpose.** `te.loada` is called in five places in `session.py`;
+   `agent.py` puts `te` in the agent namespace and `prompts.py` promises it
+   is there. The probe never imported `session`, so this stayed invisible -
+   the hosted app would die at import. Needs a local `loada` shim
+   (antimony -> SBML -> RoadRunner, per "Verified facts") and a decision on
+   what `te` means to agent code that no longer has tellurium.
+2. **`run_python` is still an unsandboxed `exec` in the host process.** See
+   "Security" above; this is the real gate, and it is unchanged.
