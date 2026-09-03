@@ -1,0 +1,18 @@
+# Never commit credentials. Keys belong in environment variables (see
+# README), or in Streamlit's secrets store - never in a file in the repo.
+*Key.txt
+*key.txt
+*.pem
+.env
+.streamlit/secrets.toml
+
+# The virtual environment is machine- and OS-specific: the Windows one is
+# useless on Linux, and it is 6,700 files that every clone would carry.
+.venv/
+venv/
+
+__pycache__/
+*.pyc
+
+# Saved evaluation runs: keep them locally, they are not part of the project.
+results/
