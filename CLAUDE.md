@@ -21,10 +21,14 @@ Milestones 1 and 2 are **done**. The GUI was brought forward and is done too.
   real page builds driven through real widgets via Streamlit's `AppTest`,
   including the password-gated path.
 
-**Current task:** deploying `streamlit_app.py` - the agent UI, now ported to
-Streamlit and verified in a browser. The simulation stack is proven on Linux
-and the sandbox is verified with a real key. See "Where we are" at the
-bottom.
+**The agent is deployed and working** at
+<https://roadrunneragent.streamlit.app/>, behind `APP_PASSWORD`, with a real
+question answered through it. Milestone 3 is effectively done.
+
+**Current task:** deciding what the public version is. Community Cloud can
+only ever serve invited people (see "What blocks hosting the agent"), so the
+open question is a container per session versus a client-side build. See
+"Where we are" at the bottom.
 
 ## Environment
 
@@ -258,6 +262,18 @@ they still hold on 2.10.0.
 - **Reboot after a `requirements.txt` change** (**⋮ -> Reboot app**);
   auto-rebuild on push is not prompt. **Manage app** opens the build log.
 - Anything deployed here is public under the lab's name.
+- **The app is live at <https://roadrunneragent.streamlit.app/>**, gated by
+  `APP_PASSWORD` in ⋮ -> Settings -> Secrets. That is the only secret it
+  holds: viewers bring their own API key, so the deployment carries no
+  credential of the lab's, and it must stay that way. A key in secrets would
+  be one key spent by everyone who got past the password.
+- **Every page needs `password_gate()` in its own right.** Streamlit pages
+  are reachable by URL and from the sidebar regardless of what the main
+  script did. The probe page was open to anyone with the address until
+  `gate.py` was pulled out and both pages called it.
+- **Set the password before the first public push, not after.** The gate is
+  off by default so that running locally needs no setup, which is what makes
+  forgetting it the easy mistake.
 
 ### Check a requirements change before pushing
 
@@ -308,6 +324,28 @@ python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('h
    during a run nothing can touch a widget, so `on_event` paints into a
    container as events arrive and the feed streams fine.
 
+### Keys in the hosted build
+
+The deployment holds no credential. Each viewer pastes their own into the
+sidebar; it is kept in `st.session_state` and passed to `agent.ask` as a
+**constructed client**, never written to `os.environ` - the environment is
+process-global, and one container serves every viewer, so a key placed there
+would leak between them.
+
+- Anthropic and DeepSeek are both offered. `providers.make_provider` takes a
+  `client` and the OpenAI-compatible provider uses it verbatim, so DeepSeek
+  needs only `OpenAI(api_key=..., base_url=...)`. Keys are held per provider,
+  so switching model does not discard the other.
+- **Build the client the way `agent.make_client` does, not by hand.** The
+  hosted build constructed `anthropic.Anthropic(api_key=...)` directly and
+  dropped the `anthropic-workspace-id` header an identity-linked key
+  requires; the first real run 400'd with a message that reads like an auth
+  failure and is not. There is now a workspace-ID field in the sidebar,
+  seeded from `ANTHROPIC_WORKSPACE_ID`.
+- `streamlit` is pinned to **1.63.0** in `requirements.txt`, for the reason
+  `libroadrunner` and `numpy` are: a floating version lets the host change
+  widget semantics under a page tested against a known one.
+
 ### Five Streamlit rules this port had to learn
 
 All five produced a working-looking page that was quietly wrong.
@@ -346,10 +384,11 @@ All five produced a working-looking page that was quietly wrong.
 
 ### Next actions, in order
 
-**Done, 2026-09-03 - do not redo:** the API key is replaced and persisted as
-`RRAGENT_ANTHROPIC_KEY`; one case has been run end to end through the
-sandbox with it; and the Streamlit UI is built and verified. The numbers are
-under "Security" and "Economics" above. To re-check the key without
+**Done, 2026-09-03/04 - do not redo:** the API key is replaced and persisted
+as `RRAGENT_ANTHROPIC_KEY`; a case has been run end to end through the
+sandbox; the Streamlit UI is built, verified in a browser, **deployed and
+used for a real question**; DeepSeek is wired in alongside Anthropic. The
+numbers are under "Security" and "Economics". To re-check the key without
 printing it:
 
 ```bash
@@ -360,47 +399,33 @@ reg query 'HKCU\Environment' //v RRAGENT_ANTHROPIC_KEY >/dev/null 2>&1 && echo p
 echo "key: ${RRAGENT_ANTHROPIC_KEY:+set}"
 ```
 
-1. **Run one agent question through the hosted UI.** Everything else about
-   it is verified headlessly and in a browser; what no test covers is the
-   streamed feed and the report panel during a real run, because that needs
-   a key pasted into the sidebar. Paste it, click **Answer my question**,
-   and watch the feed. About $0.05.
+1. **Decide what the public version is.** This is the only open question and
+   nothing above changed it. Community Cloud serves one container to every
+   viewer, so the deployment is defensible for invited colleagues and not
+   for the open web - not because of the free tier, but because Streamlit
+   runs one process for all sessions, which paying would not alter.
 
-2. **Deploy it.** Point Community Cloud at `streamlit_app.py` (it currently
-   serves the probe, which is now `pages/2_Deployment_probe.py` and still
-   reachable from the sidebar), reboot after the requirements change, and
-   set `APP_PASSWORD` in the app's secrets. Without that password the app is
-   open to anyone with the URL - `password_gate()` allows it, deliberately,
-   so that running locally needs no setup, which makes forgetting it on the
-   deployment the easy mistake.
+   - *Fly / Render / Cloud Run* runs `app.py` unchanged - NiceGUI is ASGI -
+     and can give a container per session, which is the only real answer to
+     the filesystem, network and CPU abuse the worker subprocess does not
+     close. Costs money per user.
+   - *A client-side build* - the agent's code running in the visitor's own
+     browser - makes those three problems irrelevant rather than solved, and
+     is free and unbounded, the way WebIridium is on GitHub Pages. It needs
+     the agent to write JavaScript rather than Python, or Pyodide.
 
-3. **The hosting question is still open, and the answer has not changed.**
-   Community Cloud is now a real option rather than a port away - but it
+   The second is the more interesting answer and is written up separately;
+   the first is the safe one if something is needed sooner.
 
-   still cannot isolate viewers from each other, and that has not been
-   fixed by anything above.
+2. **Cheap and decisive: try a JavaScript executor.** Whether a client-side
+   build is possible at all turns on one question - does the agent answer as
+   well when it writes JavaScript instead of Python? Keep the executor
+   pluggable behind `run_python`'s `(output, is_error)` contract, write
+   `run_javascript`, rewrite the API section of `prompts.py`, and run the
+   eight cases against the recorded baseline of 8/8 at $0.23. About $0.25.
+   Read `goodwin_damped` by hand: it is the case that separates computing a
+   threshold from reciting one, and every mechanical check passes either way.
 
-   - *Community Cloud* is deployable today. One container serves every
-     viewer, so it is defensible only for a few named colleagues behind
-     `APP_PASSWORD`, each bringing their own key - which is exactly how
-     `streamlit_app.py` is written.
-   - *Fly / Render / Cloud Run* runs `app.py` as-is - NiceGUI is ASGI, so
-     there is no UI port at all - and can give a container per session, which
-     is the only real answer to the filesystem, network and CPU abuse the
-     worker subprocess deliberately does not close.
-
-   **The recommendation is still the second**, but the argument has changed:
-   the UI port is no longer the cost, because it is done. What remains is
-   only that Community Cloud cannot give a container per session. Ship on
-   Community Cloud now for colleagues; move to Fly or Cloud Run when it
-   needs to face anyone else.
-
-2. **Once hosting is chosen**, the work behind it is: a Dockerfile pinning the
-   host's resolved set (Python 3.11, `libroadrunner 2.10.0`, `numpy 2.2.6`,
-   tellurium - see "What the host installs"), a container or equivalent
-   boundary per session to close filesystem/network/CPU, and bring-your-own-key
-   in the GUI so the deployment holds no credential of the lab's.
-
-3. **Optional, cheap, not blocking:** re-run the full set through the sandbox
-   (`--cases all --sandbox`, ~$0.40 at sonnet-5/low) to confirm the 8/8 result
-   holds there as well as in-process. One case already shows it does.
+3. **Optional, not blocking:** re-run the full set through the sandbox
+   (`--cases all --sandbox`, ~$0.40 at sonnet-5/low) to confirm 8/8 holds
+   there as well as in-process. One case already shows it does.
